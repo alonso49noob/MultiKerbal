@@ -6,11 +6,12 @@ using UnityEngine;
 
 namespace MultiKerbal.Client.UI
 {
-    /// <summary>Ventana en partida: estado del reloj, jugadores y chat.</summary>
+    /// <summary>Ventana en partida: estado del reloj, jugadores, naves y chat.</summary>
     internal sealed class MultiplayerWindow
     {
         private const int WindowId = 0x4D4B0002;
         private const float Width = 440f;
+        private const int MaxVesselRows = 8;
         private const string InputControl = "MultiKerbalChatInput";
         private const string InputLockId = "MultiKerbalChat";
 
@@ -71,6 +72,7 @@ namespace MultiKerbal.Client.UI
         {
             DrawStatus();
             DrawPlayers();
+            DrawVessels();
             DrawChat();
 
             GUILayout.BeginHorizontal();
@@ -91,7 +93,6 @@ namespace MultiKerbal.Client.UI
             string warp = clock.Rate > 1.0 ? $"warp x{clock.Rate:0.##}" : "tiempo normal";
             string network = $"ping {_core.RoundTripMs:0} ms" + (_core.UdpReady ? string.Empty : " · sin UDP");
             GUILayout.Label($"{KerbalTime.Format(Planetarium.GetUniversalTime())} · {warp} · {network}", UiStyles.Muted);
-            GUILayout.Label($"Naves en el universo: {_core.Vessels.TotalVessels} (tuyas: {_core.Vessels.OwnVessels})", UiStyles.Muted);
         }
 
         private void DrawPlayers()
@@ -107,6 +108,41 @@ namespace MultiKerbal.Client.UI
             }
         }
 
+        /// <summary>Naves del universo con su dueño; en vuelo, además, a qué distancia están.</summary>
+        private void DrawVessels()
+        {
+            int total = _core.Vessels.TotalVessels;
+            GUILayout.Label($"Naves ({total}, tuyas: {_core.Vessels.OwnVessels})", UiStyles.Bold);
+            if (total == 0)
+            {
+                GUILayout.Label("Ninguna todavía", UiStyles.Muted);
+                return;
+            }
+
+            Vessel active = HighLogic.LoadedSceneIsFlight ? FlightGlobals.ActiveVessel : null;
+            int shown = 0;
+            foreach (Vessels.TrackedVessel tracked in _core.Vessels.Tracked)
+            {
+                if (shown >= MaxVesselRows)
+                {
+                    GUILayout.Label($"… y {total - shown} más", UiStyles.Muted);
+                    break;
+                }
+
+                shown++;
+                PlayerInfo owner = _core.Players.Get(tracked.OwnerId);
+                string ownerName = _core.Vessels.IsMine(tracked) ? "tuya" : owner?.Name ?? "sin dueño";
+                GUILayout.BeginHorizontal();
+                UiStyles.ColoredLabel(
+                    string.IsNullOrEmpty(tracked.Name) ? "(sin nombre)" : tracked.Name,
+                    tracked.OwnerId == 0 ? Color.gray : PlayerRegistry.ColorOf(owner),
+                    GUILayout.Width(180f));
+                GUILayout.Label(ownerName, UiStyles.Muted, GUILayout.Width(110f));
+                GUILayout.Label(DescribeDistance(tracked, active), UiStyles.Muted);
+                GUILayout.EndHorizontal();
+            }
+        }
+
         private void DrawChat()
         {
             GUILayout.Label("Chat", UiStyles.Bold);
@@ -117,7 +153,7 @@ namespace MultiKerbal.Client.UI
                 _chatScroll.y = float.MaxValue;
             }
 
-            _chatScroll = GUILayout.BeginScrollView(_chatScroll, GUILayout.Height(220f));
+            _chatScroll = GUILayout.BeginScrollView(_chatScroll, GUILayout.Height(200f));
             foreach (ChatLog.Line line in _core.Chat.Lines)
                 UiStyles.ColoredLabel(line.IsSystem ? line.Text : $"{line.Sender}: {line.Text}", line.Color);
             GUILayout.EndScrollView();
@@ -143,6 +179,19 @@ namespace MultiKerbal.Client.UI
             }
 
             _inputFocused = GUI.GetNameOfFocusedControl() == InputControl;
+        }
+
+        private string DescribeDistance(Vessels.TrackedVessel tracked, Vessel active)
+        {
+            if (active == null)
+                return string.Empty;
+
+            Vessel vessel = _core.Vessels.VesselOf(tracked);
+            if (vessel == null || vessel == active)
+                return string.Empty;
+
+            double distance = (vessel.transform.position - active.transform.position).magnitude;
+            return distance < 1000.0 ? $"{distance:0} m" : $"{distance / 1000.0:0.#} km";
         }
 
         /// <summary>Mientras se escribe, KSP no debe interpretar las teclas (espacio = separar etapa...).</summary>

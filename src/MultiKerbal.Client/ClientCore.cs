@@ -172,10 +172,21 @@ namespace MultiKerbal.Client
 
         public void OnGUI()
         {
+            UiVisibility.Ensure();
+            if (!UiVisibility.Visible)
+                return;
+
             if (HighLogic.LoadedScene == GameScenes.MAINMENU)
+            {
                 ConnectWindow.Draw();
-            else if (State == SessionState.Joined && ClientScenes.IsGameplay)
-                MultiplayerWindow.Draw();
+                return;
+            }
+
+            if (State != SessionState.Joined || !ClientScenes.IsGameplay)
+                return;
+
+            RemoteVesselLabels.Draw(this);
+            MultiplayerWindow.Draw();
         }
 
         public void Shutdown(string reason)

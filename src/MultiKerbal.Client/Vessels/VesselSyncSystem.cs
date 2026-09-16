@@ -65,6 +65,14 @@ namespace MultiKerbal.Client.Vessels
             }
         }
 
+        /// <summary>Naves conocidas del universo (para la interfaz).</summary>
+        public IEnumerable<TrackedVessel> Tracked => _tracked.Values;
+
+        public bool IsMine(TrackedVessel tracked) => IsLocal(tracked);
+
+        /// <summary>La nave en la escena actual, o null si no está cargada.</summary>
+        public Vessel VesselOf(TrackedVessel tracked) => LiveVessel(tracked);
+
         public void RegisterEvents()
         {
             if (_eventsRegistered)
