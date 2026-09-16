@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Plugin de KSP. Se compila contra las DLL de la instalación indicada en LocalDev.props ($(KSPDir)). -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>MultiKerbal.Client</RootNamespace>
+    <AssemblyName>MultiKerbal.Client</AssemblyName>
+    <KSPManaged>$(KSPDir)\KSP_x64_Data\Managed</KSPManaged>
+    <ModGameData>$(KSPDir)\GameData\MultiKerbal</ModGameData>
+  </PropertyGroup>
+
+  <Target Name="CheckKSPDir" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(KSPManaged)\Assembly-CSharp.dll')">
+    <Error Text="No se encuentra KSP en '$(KSPDir)'. Crea LocalDev.props a partir de LocalDev.props.example." />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp" HintPath="$(KSPManaged)\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="Assembly-CSharp-firstpass" HintPath="$(KSPManaged)\Assembly-CSharp-firstpass.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(KSPManaged)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(KSPManaged)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AnimationModule" HintPath="$(KSPManaged)\UnityEngine.AnimationModule.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(KSPManaged)\UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.InputLegacyModule" HintPath="$(KSPManaged)\UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(KSPManaged)\UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(KSPManaged)\UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UI" HintPath="$(KSPManaged)\UnityEngine.UI.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MultiKerbal.Common\MultiKerbal.Common.csproj" />
+  </ItemGroup>
+
+  <!-- Copia el mod a GameData al compilar (DeployToKSP=true en LocalDev.props). -->
+  <Target Name="DeployToKSP" AfterTargets="Build" Condition="'$(DeployToKSP)' == 'true'">
+    <ItemGroup>
+      <ModPlugins Include="$(OutDir)MultiKerbal.Client.dll;$(OutDir)MultiKerbal.Common.dll" />
+      <ModPlugins Include="$(OutDir)MultiKerbal.Client.pdb;$(OutDir)MultiKerbal.Common.pdb" Condition="Exists('$(OutDir)MultiKerbal.Client.pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModPlugins)" DestinationFolder="$(ModGameData)\Plugins" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="MultiKerbal desplegado en $(ModGameData)" />
+  </Target>
+
+</Project>

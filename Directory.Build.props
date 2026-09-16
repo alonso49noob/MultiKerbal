@@ -1,0 +1,14 @@
+<Project>
+  <!-- Ruta local de KSP y opciones de despliegue (no se sube al repositorio). -->
+  <Import Project="$(MSBuildThisFileDirectory)LocalDev.props" Condition="Exists('$(MSBuildThisFileDirectory)LocalDev.props')" />
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Version>0.1.0</Version>
+    <Product>MultiKerbal</Product>
+    <Deterministic>true</Deterministic>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

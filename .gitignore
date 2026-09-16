@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+*.log
+
+# Configuración local de cada desarrollador (ruta de KSP)
+LocalDev.props
+
+# Datos generados al ejecutar el servidor en local
+run/

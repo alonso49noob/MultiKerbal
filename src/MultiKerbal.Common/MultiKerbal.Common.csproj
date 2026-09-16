@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Código compartido entre cliente y servidor: protocolo, serialización, transporte y lógica de tiempo.
+    net472 lo carga el Mono de KSP (sin netstandard.dll); net10.0 lo usa el servidor.
+    Regla: nada de dependencias externas ni APIs posteriores a .NET Framework 4.7.2.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>net472;net10.0</TargetFrameworks>
+    <RootNamespace>MultiKerbal.Common</RootNamespace>
+    <AssemblyName>MultiKerbal.Common</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MultiKerbal.Tests" />
+  </ItemGroup>
+
+</Project>

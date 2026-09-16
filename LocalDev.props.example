@@ -1,0 +1,9 @@
+<Project>
+  <!-- Copia este archivo como LocalDev.props y ajusta las rutas a tu entorno. -->
+  <PropertyGroup>
+    <!-- Instalación de KSP contra la que se compila el cliente. -->
+    <KSPDir>E:\KSP-Dev</KSPDir>
+    <!-- true: al compilar el cliente se copia el mod a $(KSPDir)\GameData\MultiKerbal -->
+    <DeployToKSP>true</DeployToKSP>
+  </PropertyGroup>
+</Project>
