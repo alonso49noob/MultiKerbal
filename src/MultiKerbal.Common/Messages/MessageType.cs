@@ -29,7 +29,9 @@ namespace MultiKerbal.Common.Messages
         VesselProto = 60,
         VesselUpdate = 61,
         VesselRemove = 62,
-        VesselOwnership = 63,
-        VesselOwnershipRequest = 64,
+        VesselControl = 63,
+        VesselControlRequest = 64,
+        VesselOwner = 65,
+        VesselOwnerRequest = 66,
     }
 }

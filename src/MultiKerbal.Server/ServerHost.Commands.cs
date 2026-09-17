@@ -19,12 +19,17 @@ public sealed partial class ServerHost
         {
             case "help":
             case "ayuda":
-                Log.Info("Comandos: list | vessels | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
+                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
                 break;
 
             case "vessels":
             case "naves":
                 ListVessels();
+                break;
+
+            case "owner":
+            case "dueño":
+                SetOwnerCommand(arguments);
                 break;
 
             case "warp":

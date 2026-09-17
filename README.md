@@ -41,7 +41,7 @@ dotnet run --project src/MultiKerbal.Server -- --port 6750
 
 La primera vez crea `server.json` (nombre, puerto, contraseña, máximo de jugadores, MOTD) en el directorio de trabajo y guarda el universo en `Universe/`. Abre el puerto **TCP y UDP** si juegas por Internet.
 
-Comandos de consola: `list`, `vessels`, `say <texto>`, `kick <jugador> [motivo]`, `time`, `save`, `stop`.
+Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|compartida|publica]`, `warp`, `say <texto>`, `kick <jugador> [motivo]`, `time`, `save`, `stop`.
 
 ## Jugar
 

@@ -64,13 +64,17 @@ Cliente:
 
 ## Naves
 
-**Autoridad.** Cada nave tiene como mucho un dueño, el único que envía su estado. Quien publica una nave nueva (lanzamiento, separación de etapas, EVA, bandera) pasa a ser su dueño; al pilotar una nave sin dueño se pide el control y, si lo tiene otro jugador, se vuelve a la nave anterior. Al desconectarse, las naves del jugador quedan libres.
+**Autoridad: piloto y dueño.** Son dos cosas distintas (reglas en `Common/Vessels/VesselAccess.cs`, comprobadas en el servidor y reflejadas en el cliente):
+
+- **Piloto** (control, solo en memoria): como mucho uno por nave, el único que envía su estado. Al pilotar una nave que nadie pilota se pide el control; si se deniega, se vuelve a la nave anterior (en la estación de seguimiento ni siquiera se deja pulsar "Volar"). El piloto la suelta en cuanto deja de simularla: ni es su nave activa ni está cargada cerca, y va en órbita, posada o amerizada (antes envía su definición y su estado finales). Las que siguen en vuelo atmosférico o suborbital se quedan con él hasta que KSP las destruya. Al desconectarse, deja de pilotar todas.
+- **Dueño** (se guarda en disco, por nombre de jugador): quien publica una nave nueva (lanzamiento, separación de etapas, EVA, bandera), con el acceso por defecto de sus ajustes. El acceso decide qué pueden hacer los demás: **privada** (nada), **compartida** (pilotarla; recuperarla o borrarla no) o **pública** (todo). Quien la pilota siempre puede perderla (choques, acoplamientos). El dueño puede cambiar el acceso, regalarla a un jugador conectado o dejarla sin dueño; una nave sin dueño es de todos y cualquiera puede reclamarla. Hacerla privada saca a quien la estuviera pilotando. El administrador puede reasignarla con `owner`.
+- Limitación: el jugador se identifica solo por su nombre. Mientras el dueño no esté conectado, otro podría entrar con ese nombre (la contraseña del servidor es la única protección).
 
 **Mensajes.**
 
 - `VesselProto` (TCP): nodo `VESSEL` de KSP más los nodos `KERBAL` de la tripulación, en texto comprimido con GZip. Se envía al crear la nave, al cambiar piezas, tripulación o nombre, y cada 30 s mientras está cargada. Lleva una versión de estructura que solo cambia en los tres primeros casos: los reenvíos periódicos actualizan los datos guardados sin obligar a los demás a recargar (y hacer parpadear) la nave. El servidor lo guarda sin interpretarlo en `Universe/Vessels/<id>.vessel`.
 - `VesselUpdate` (UDP): elementos orbitales, latitud/longitud/altitud y rotación relativa al cuerpo; 10 Hz con física activa y cada 5 s sobre raíles. Se usan elementos orbitales porque no dependen del marco local de cada jugador (KSP lo cambia según la altitud) y se propagan solos hasta el UT de quien los recibe, lo que compensa la latencia.
-- `VesselRemove`, `VesselOwnership` y `VesselOwnershipRequest`.
+- `VesselRemove`; `VesselControl` y `VesselControlRequest` (piloto); `VesselOwner` y `VesselOwnerRequest` (dueño y acceso). El archivo de cada nave guarda también dueño y acceso (versión 3; las de versiones anteriores cargan sin dueño).
 
 **Marionetas.** Las naves ajenas son naves reales de KSP (mapa, estación de seguimiento, fijar objetivo) pero siempre empaquetadas, sin física local. En vuelo KSP las coloca sobre la órbita recibida; las posadas se recolocan cada frame por latitud/longitud. Para que KSP no las destruya:
 
@@ -81,7 +85,7 @@ Cliente:
 
 **Escenas.** KSP reconstruye las naves desde el guardado en cada escena con planetario (Centro Espacial, estación de seguimiento y vuelo). Al entrar se reconcilia: se adoptan las copias al día, se eliminan las desfasadas o borradas en el servidor y se crean las que falten.
 
-**Otros detalles.** Antes de crear una nave se añaden al plantel los kerbals que falten y se comprueba que existan todas sus piezas (si no, aviso en pantalla en lugar de la ventana de error de KSP). Los asteroides no se generan en partidas multijugador: cada jugador tendría los suyos.
+**Otros detalles.** Antes de crear una nave se añaden al plantel los kerbals que falten y se comprueba que existan todas sus piezas (si no, aviso en pantalla en lugar de la ventana de error de KSP). Los asteroides no se generan en partidas multijugador: cada jugador tendría los suyos (los pocos que KSP crea con la partida, antes de poder impedirlo, se eliminan). A las marionetas se les actualiza también la copia guardada (`protoVessel`: situación, posada, latitud…), porque con la nave lejos KSP consulta esa copia y no la nave.
 
 **Limitaciones conocidas de la fase 2.**
 
@@ -97,9 +101,9 @@ Cliente:
 Ver la sección [Naves](#naves). Comprobado en el juego: publicación al lanzar, aparición en la lista de la estación de seguimiento y en el mapa, seguimiento del vuelo, eliminación de escombros y ajustes de warp (aceptar, rechazar, aceptar por ausencia).
 
 ### Fase 3 — Interacción entre naves
-- Colisiones: cada dueño simula su nave; las remotas se comportan como cuerpos cinemáticos con tolerancia a impactos elevada.
+- Colisiones: cada piloto simula su nave; las remotas se comportan como cuerpos cinemáticos con tolerancia a impactos elevada.
 - Acoplamiento: lo resuelve el jugador que acopla; el servidor fusiona las naves, reasigna el control y el otro jugador pasa a pasajero hasta desacoplar.
-- EVA junto a naves de otros, embarque y naves sin dueño simuladas por el jugador más cercano.
+- EVA junto a naves de otros, embarque y naves que nadie pilota simuladas por el jugador más cercano.
 
 ### Más adelante
 - Comprobación de la lista de mods al conectar (imprescindible para instalaciones con mods).

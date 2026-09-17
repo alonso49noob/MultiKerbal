@@ -1,5 +1,6 @@
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Net;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Tests;
 
@@ -123,7 +124,9 @@ internal static class SampleMessages
         yield return new VesselProtoMessage
         {
             VesselId = Guid.Parse("6f1c6a8e-3b0e-4f5d-9d1a-2c7b8e9f0a11"),
-            OwnerId = 2,
+            ControllerId = 2,
+            OwnerName = "Valentina",
+            Access = VesselAccess.Private,
             VesselName = "Kerbal X",
             StructureVersion = 3,
             Data = [0x1F, 0x8B, 1, 2, 3],
@@ -150,7 +153,9 @@ internal static class SampleMessages
             RotationW = 0.927f,
         };
         yield return new VesselRemoveMessage { VesselId = Guid.NewGuid() };
-        yield return new VesselOwnershipMessage { VesselId = Guid.NewGuid(), OwnerId = 5 };
-        yield return new VesselOwnershipRequestMessage { VesselId = Guid.NewGuid(), Acquire = true };
+        yield return new VesselControlMessage { VesselId = Guid.NewGuid(), ControllerId = 5 };
+        yield return new VesselControlRequestMessage { VesselId = Guid.NewGuid(), Acquire = true };
+        yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public };
+        yield return new VesselOwnerRequestMessage { VesselId = Guid.NewGuid(), OwnerName = string.Empty, Access = VesselAccess.Shared };
     }
 }

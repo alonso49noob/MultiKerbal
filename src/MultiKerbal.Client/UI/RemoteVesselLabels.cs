@@ -1,5 +1,6 @@
 using MultiKerbal.Client.Systems;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Vessels;
 using UnityEngine;
 
 namespace MultiKerbal.Client.UI
@@ -10,15 +11,16 @@ namespace MultiKerbal.Client.UI
     /// </summary>
     internal static class RemoteVesselLabels
     {
-        private const double MaxFlightDistance = 100000.0;
-        private const float LabelWidth = 260f;
+        public const double MaxFlightDistance = 100000.0;
+        private const float LabelWidth = 360f;
         private const float LabelHeight = 22f;
 
         private static GUIStyle _style;
 
         public static void Draw(ClientCore core)
         {
-            if (!HighLogic.LoadedSceneIsFlight || !FlightGlobals.ready)
+            LabelFilter filter = core.Settings.Labels;
+            if (!filter.Enabled || !HighLogic.LoadedSceneIsFlight || !FlightGlobals.ready)
                 return;
 
             bool map = MapView.MapIsEnabled;
@@ -35,11 +37,12 @@ namespace MultiKerbal.Client.UI
             Vessel active = FlightGlobals.ActiveVessel;
             foreach (Vessels.TrackedVessel tracked in core.Vessels.Tracked)
             {
-                if (core.Vessels.IsMine(tracked))
+                // Solo las ajenas: las nuestras, salvo que ahora las pilote otro.
+                if (core.Vessels.IsPilotedByMe(tracked) || (core.Vessels.IsOwnedByMe(tracked) && !core.Vessels.IsPilotedByOther(tracked)))
                     continue;
 
                 Vessel vessel = core.Vessels.VesselOf(tracked);
-                if (vessel == null || vessel == active)
+                if (vessel == null || vessel == active || !filter.Shows(vessel.vesselType))
                     continue;
 
                 Vector3d position = vessel.transform.position;
@@ -51,11 +54,15 @@ namespace MultiKerbal.Client.UI
                 if (screen.z <= 0f)
                     continue;
 
-                PlayerInfo owner = core.Players.Get(tracked.OwnerId);
-                _style.normal.textColor = tracked.OwnerId == 0 ? Color.gray : PlayerRegistry.ColorOf(owner);
-                string text = tracked.OwnerId == 0
-                    ? $"{tracked.Name} (sin dueño)"
-                    : $"{tracked.Name} · {owner?.Name ?? "otro jugador"}";
+                _style.normal.textColor = core.Players.ColorOfOwner(tracked.OwnerName);
+                string text = VesselPermissions.HasOwner(tracked.OwnerName)
+                    ? $"{tracked.Name} · {tracked.OwnerName}"
+                    : $"{tracked.Name} (sin dueño)";
+
+                // Si la pilota alguien que no es su dueño, también se indica.
+                PlayerInfo pilot = core.Players.Get(tracked.ControllerId);
+                if (pilot != null && !VesselPermissions.IsOwner(tracked.OwnerName, pilot.Name))
+                    text += $" — la pilota {pilot.Name}";
 
                 var rect = new Rect(screen.x - (LabelWidth / 2f), Screen.height - screen.y - LabelHeight - 6f, LabelWidth, LabelHeight);
                 GUI.Label(rect, text, _style);

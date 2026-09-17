@@ -263,8 +263,11 @@ public sealed partial class ServerHost
             case VesselRemoveMessage remove:
                 OnVesselRemove(player, remove);
                 break;
-            case VesselOwnershipRequestMessage ownership:
-                OnVesselOwnershipRequest(player, ownership);
+            case VesselControlRequestMessage control:
+                OnVesselControlRequest(player, control);
+                break;
+            case VesselOwnerRequestMessage owner:
+                OnVesselOwnerRequest(player, owner);
                 break;
             case DisconnectMessage disconnect:
                 string reason = SanitizeText(disconnect.Reason, 100);

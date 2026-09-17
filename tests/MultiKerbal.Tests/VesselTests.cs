@@ -1,6 +1,7 @@
 using System.Text;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Serialization;
+using MultiKerbal.Common.Vessels;
 using MultiKerbal.Server;
 using MultiKerbal.Server.Persistence;
 
@@ -13,7 +14,7 @@ public sealed class VesselSyncTests : IDisposable
     private readonly TestServer _server = new();
 
     [Fact]
-    public void Proto_IsRelayedWithOwner_AndSentToLateJoiners()
+    public void Proto_IsRelayedWithPilot_AndSentToLateJoiners()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -22,17 +23,17 @@ public sealed class VesselSyncTests : IDisposable
         jeb.Send(Proto(1, 2, 3));
 
         VesselProtoMessage relayed = bill.WaitFor<VesselProtoMessage>(m => m.VesselId == VesselId);
-        Assert.Equal(jebId, relayed.OwnerId);
+        Assert.Equal(jebId, relayed.ControllerId);
         Assert.Equal("Kerbal X", relayed.VesselName);
         Assert.Equal(new byte[] { 1, 2, 3 }, relayed.Data);
-        Assert.Equal(jebId, jeb.WaitFor<VesselOwnershipMessage>(m => m.VesselId == VesselId).OwnerId);
+        Assert.Equal(jebId, jeb.WaitFor<VesselControlMessage>(m => m.VesselId == VesselId).ControllerId);
 
         TestClient val = _server.Join("Val");
-        Assert.Equal(jebId, val.WaitFor<VesselProtoMessage>(m => m.VesselId == VesselId).OwnerId);
+        Assert.Equal(jebId, val.WaitFor<VesselProtoMessage>(m => m.VesselId == VesselId).ControllerId);
     }
 
     [Fact]
-    public void Updates_OnlyFromOwner_AreRelayedAndKept()
+    public void Updates_OnlyFromPilot_AreRelayedAndKept()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -42,7 +43,7 @@ public sealed class VesselSyncTests : IDisposable
         jeb.Send(Update(10));
         Assert.Equal(10, bill.WaitFor<VesselUpdateMessage>().UniversalTime);
 
-        bill.Send(Update(999)); // Bill no es el dueño: se ignora.
+        bill.Send(Update(999)); // Bill no la pilota: se ignora.
         bill.Send(new ChatMessage { Text = "sincronizar" });
         jeb.WaitFor<ChatMessage>(m => m.Text == "sincronizar");
         Assert.Empty(jeb.Received<VesselUpdateMessage>());
@@ -69,7 +70,7 @@ public sealed class VesselSyncTests : IDisposable
     }
 
     [Fact]
-    public void NonOwner_CannotOverwriteOrRemoveVessel()
+    public void NonPilot_CannotOverwriteOrRemoveVessel()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -80,11 +81,11 @@ public sealed class VesselSyncTests : IDisposable
         Assert.Equal(new byte[] { 1 }, bill.WaitFor<VesselProtoMessage>().Data);
 
         bill.Send(new VesselRemoveMessage { VesselId = VesselId });
-        Assert.Equal(jeb.Welcome!.PlayerId, bill.WaitFor<VesselProtoMessage>().OwnerId);
+        Assert.Equal(jeb.Welcome!.PlayerId, bill.WaitFor<VesselProtoMessage>().ControllerId);
     }
 
     [Fact]
-    public void Remove_ByOwner_IsRelayedAndForgotten()
+    public void Remove_ByPilot_IsRelayedAndForgotten()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -101,7 +102,7 @@ public sealed class VesselSyncTests : IDisposable
     }
 
     [Fact]
-    public void Ownership_IsReleasedOnDisconnect_ThenFirstComeFirstServed()
+    public void Control_IsReleasedOnDisconnect_ThenFirstComeFirstServed()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -112,26 +113,56 @@ public sealed class VesselSyncTests : IDisposable
         val.WaitFor<VesselProtoMessage>();
 
         jeb.Net.Disconnect("Adiós");
-        bill.WaitFor<VesselOwnershipMessage>(m => m.OwnerId == 0);
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
 
-        bill.Send(new VesselOwnershipRequestMessage { VesselId = VesselId, Acquire = true });
-        bill.WaitFor<VesselOwnershipMessage>(m => m.OwnerId == billId);
-        val.WaitFor<VesselOwnershipMessage>(m => m.OwnerId == billId);
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
+        val.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
 
         // Val llega tarde: la petición se deniega y se le informa de quién la controla.
-        val.Send(new VesselOwnershipRequestMessage { VesselId = VesselId, Acquire = true });
-        val.WaitFor<VesselOwnershipMessage>(m => m.OwnerId == billId);
+        val.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        val.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
 
-        bill.Send(new VesselOwnershipRequestMessage { VesselId = VesselId, Acquire = false });
-        val.WaitFor<VesselOwnershipMessage>(m => m.OwnerId == 0);
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = false });
+        val.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
     }
 
     [Fact]
-    public void Vessels_PersistAcrossRestarts_WithoutOwner()
+    public void Release_AfterFinalProtoAndUpdate_KeepsBothAndLetsOthersTakeIt()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        int billId = bill.Welcome!.PlayerId;
+        VesselProtoMessage first = Proto(1);
+        first.StructureVersion = 3;
+        jeb.Send(first);
+        bill.WaitFor<VesselProtoMessage>();
+
+        // Lo que envía el cliente al dejar la nave: definición final (misma estructura), estado final y liberación.
+        VesselProtoMessage final = Proto(1, 2);
+        final.StructureVersion = 3;
+        jeb.Send(final);
+        jeb.Send(Update(77));
+        jeb.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = false });
+
+        VesselProtoMessage relayed = bill.WaitFor<VesselProtoMessage>(m => m.Data.Length == 2);
+        Assert.Equal(3, relayed.StructureVersion);
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
+
+        TestClient val = _server.Join("Val");
+        Assert.Equal(new byte[] { 1, 2 }, val.WaitFor<VesselProtoMessage>().Data);
+        Assert.Equal(77, val.WaitFor<VesselUpdateMessage>().UniversalTime);
+
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
+    }
+
+    [Fact]
+    public void Vessels_PersistAcrossRestarts_WithoutPilot_ButWithOwner()
     {
         TestClient jeb = _server.Join("Jeb");
         jeb.Send(Proto(4, 5, 6));
-        jeb.WaitFor<VesselOwnershipMessage>();
+        jeb.WaitFor<VesselControlMessage>();
         jeb.Send(Update(42));
         jeb.Send(new ChatMessage { Text = "fin" });
         jeb.WaitFor<ChatMessage>(m => m.Text == "fin");
@@ -141,14 +172,15 @@ public sealed class VesselSyncTests : IDisposable
         TestClient bill = _server.Join("Bill");
         VesselProtoMessage proto = bill.WaitFor<VesselProtoMessage>();
         Assert.Equal(new byte[] { 4, 5, 6 }, proto.Data);
-        Assert.Equal(0, proto.OwnerId);
+        Assert.Equal(0, proto.ControllerId);
+        Assert.Equal("Jeb", proto.OwnerName);
         Assert.Equal(42, bill.WaitFor<VesselUpdateMessage>().UniversalTime);
     }
 
     public void Dispose() => _server.Dispose();
 
     private static VesselProtoMessage Proto(params byte[] data) =>
-        new() { VesselId = VesselId, VesselName = "Kerbal X", Data = data };
+        new() { VesselId = VesselId, VesselName = "Kerbal X", Access = VesselAccess.Shared, Data = data };
 
     private static VesselUpdateMessage Update(double universalTime) => new()
     {
@@ -194,7 +226,7 @@ public sealed class VesselStoreTests : IDisposable
     }
 
     [Fact]
-    public void SaveAndLoad_KeepsVessels_ForgetsRemovedOnes_AndDropsOwners()
+    public void SaveAndLoad_KeepsVesselsAndOwners_ForgetsRemovedOnes_AndDropsPilots()
     {
         Guid kept = Guid.NewGuid();
         Guid removed = Guid.NewGuid();
@@ -202,7 +234,9 @@ public sealed class VesselStoreTests : IDisposable
         StoredVessel vessel = store.GetOrCreate(kept);
         vessel.Name = "Kept";
         vessel.Data = [1];
-        vessel.OwnerId = 3;
+        vessel.OwnerName = "Valentina";
+        vessel.Access = VesselAccess.Private;
+        vessel.ControllerId = 3;
         store.GetOrCreate(removed).Data = [2];
         store.SaveDirty();
         store.Remove(removed);
@@ -213,7 +247,9 @@ public sealed class VesselStoreTests : IDisposable
 
         StoredVessel loaded = Assert.Single(reloaded.All);
         Assert.Equal(kept, loaded.Id);
-        Assert.Equal(0, loaded.OwnerId);
+        Assert.Equal("Valentina", loaded.OwnerName);
+        Assert.Equal(VesselAccess.Private, loaded.Access);
+        Assert.Equal(0, loaded.ControllerId);
         Assert.Single(Directory.GetFiles(reloaded.DirectoryPath));
     }
 

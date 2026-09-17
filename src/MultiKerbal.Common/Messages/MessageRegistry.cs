@@ -24,8 +24,10 @@ namespace MultiKerbal.Common.Messages
             { MessageType.VesselProto, () => new VesselProtoMessage() },
             { MessageType.VesselUpdate, () => new VesselUpdateMessage() },
             { MessageType.VesselRemove, () => new VesselRemoveMessage() },
-            { MessageType.VesselOwnership, () => new VesselOwnershipMessage() },
-            { MessageType.VesselOwnershipRequest, () => new VesselOwnershipRequestMessage() },
+            { MessageType.VesselControl, () => new VesselControlMessage() },
+            { MessageType.VesselControlRequest, () => new VesselControlRequestMessage() },
+            { MessageType.VesselOwner, () => new VesselOwnerMessage() },
+            { MessageType.VesselOwnerRequest, () => new VesselOwnerRequestMessage() },
         };
 
         public static IEnumerable<MessageType> RegisteredTypes => Factories.Keys;

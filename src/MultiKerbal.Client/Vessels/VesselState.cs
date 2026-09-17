@@ -64,6 +64,19 @@ namespace MultiKerbal.Client.Vessels
             vessel.altitude = update.Altitude;
             vessel.srfRelRotation = RotationOf(update);
 
+            // Con la nave lejos (sin cargar) KSP consulta su copia guardada y no la nave: el truco de encuentro
+            // (Alt+F12) y el guardado de la partida, que no copia estos datos. Sin esto seguiría "en la plataforma".
+            ProtoVessel proto = vessel.protoVessel;
+            if (proto != null)
+            {
+                proto.situation = situation;
+                proto.landed = vessel.Landed;
+                proto.splashed = vessel.Splashed;
+                proto.latitude = update.Latitude;
+                proto.longitude = update.Longitude;
+                proto.altitude = update.Altitude;
+            }
+
             vessel.orbitDriver.orbit.SetOrbit(
                 update.Inclination,
                 update.Eccentricity,

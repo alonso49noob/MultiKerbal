@@ -1,8 +1,10 @@
 using System;
 using System.Globalization;
 using System.IO;
+using MultiKerbal.Client.UI;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Time;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Client
 {
@@ -11,7 +13,12 @@ namespace MultiKerbal.Client
         public string PlayerName = "Kerbal" + new Random().Next(100, 1000);
         public string Host = "127.0.0.1";
         public int Port = ProtocolInfo.DefaultPort;
+
+        /// <summary>Acceso con el que se publican las naves nuevas (se puede cambiar después en cada nave).</summary>
+        public VesselAccess DefaultAccess = VesselAccess.Shared;
+
         public WarpPolicy Warp = new WarpPolicy();
+        public LabelFilter Labels = new LabelFilter();
 
         // En la raíz de KSP y no en GameData: dos instancias que comparten GameData tienen así ajustes distintos.
         private static string FilePath => Path.Combine(KSPUtil.ApplicationRootPath, "PluginData/MultiKerbal/settings.cfg");
@@ -39,9 +46,16 @@ namespace MultiKerbal.Client
                 if (int.TryParse(node.GetValue("port"), out int port) && port > 0 && port <= 65535)
                     settings.Port = port;
 
+                if (Enum.TryParse(node.GetValue("defaultAccess"), out VesselAccess access) && VesselPermissions.IsValid(access))
+                    settings.DefaultAccess = access;
+
                 ConfigNode warp = node.GetNode("WARP_POLICY");
                 if (warp != null)
                     LoadWarp(warp, settings.Warp);
+
+                ConfigNode labels = node.GetNode("LABELS");
+                if (labels != null)
+                    LoadLabels(labels, settings.Labels);
             }
             catch (Exception ex)
             {
@@ -61,7 +75,9 @@ namespace MultiKerbal.Client
                 node.AddValue("playerName", PlayerName);
                 node.AddValue("host", Host);
                 node.AddValue("port", Port.ToString());
+                node.AddValue("defaultAccess", DefaultAccess.ToString());
                 SaveWarp(node.AddNode("WARP_POLICY"), Warp);
+                SaveLabels(node.AddNode("LABELS"), Labels);
                 root.Save(FilePath);
             }
             catch (Exception ex)
@@ -102,6 +118,20 @@ namespace MultiKerbal.Client
             node.AddValue("denyAtSpaceCenter", policy.DenyAtSpaceCenter.ToString());
             node.AddValue("denyInAtmosphere", policy.DenyInAtmosphere.ToString());
             node.AddValue("denyNearVessels", policy.DenyNearVessels.ToString());
+        }
+
+        private static void LoadLabels(ConfigNode node, LabelFilter filter)
+        {
+            filter.Enabled = ReadBool(node, "enabled", filter.Enabled);
+            foreach (LabelCategoryInfo info in LabelFilter.Categories)
+                filter[info.Category] = ReadBool(node, info.Key, filter[info.Category]);
+        }
+
+        private static void SaveLabels(ConfigNode node, LabelFilter filter)
+        {
+            node.AddValue("enabled", filter.Enabled.ToString());
+            foreach (LabelCategoryInfo info in LabelFilter.Categories)
+                node.AddValue(info.Key, filter[info.Category].ToString());
         }
 
         private static bool ReadBool(ConfigNode node, string name, bool fallback) =>

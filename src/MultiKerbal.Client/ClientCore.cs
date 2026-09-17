@@ -43,7 +43,9 @@ namespace MultiKerbal.Client
             Warp = new WarpSystem(Clock, message => Send(message), () => LocalPlayerName, () => Settings.Warp);
             Vessels = new VesselSyncSystem(
                 () => Players.LocalPlayerId,
+                () => LocalPlayerName,
                 id => Players.Get(id)?.Name ?? "otro jugador",
+                () => Settings.DefaultAccess,
                 (message, delivery) => Send(message, delivery));
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
@@ -285,7 +287,8 @@ namespace MultiKerbal.Client
                 case VesselProtoMessage _:
                 case VesselUpdateMessage _:
                 case VesselRemoveMessage _:
-                case VesselOwnershipMessage _:
+                case VesselControlMessage _:
+                case VesselOwnerMessage _:
                     Vessels.Handle(message);
                     break;
             }

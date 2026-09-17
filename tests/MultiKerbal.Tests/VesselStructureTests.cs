@@ -15,7 +15,7 @@ public sealed class VesselStructureTests : IDisposable
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
 
-        jeb.Send(new VesselProtoMessage { VesselId = id, VesselName = "Sonda", StructureVersion = 1, Data = [1] });
+        jeb.Send(new VesselProtoMessage { VesselId = id, VesselName = "Sonda", Access = MultiKerbal.Common.Vessels.VesselAccess.Shared, StructureVersion = 1, Data = [1] });
         Assert.Equal(1, bill.WaitFor<VesselProtoMessage>(m => m.VesselId == id).StructureVersion);
 
         // Refresco periódico: misma estructura, datos nuevos.
@@ -56,6 +56,27 @@ public sealed class VesselStructureTests : IDisposable
         Assert.Equal("Antigua", vessel.Name);
         Assert.Equal(0, vessel.StructureVersion);
         Assert.Equal(new byte[] { 9, 8 }, vessel.Data);
+        Assert.Equal(string.Empty, vessel.OwnerName);
+    }
+
+    [Fact]
+    public void VersionTwoFiles_LoadWithoutOwner()
+    {
+        var id = Guid.NewGuid();
+        var writer = new PacketWriter();
+        writer.WriteInt32(2);
+        writer.WriteGuid(id);
+        writer.WriteString("Kerbal X");
+        writer.WriteInt32(4);
+        writer.WriteBytes([7]);
+        writer.WriteBool(false);
+
+        StoredVessel vessel = VesselStore.Deserialize(writer.ToArray());
+
+        Assert.Equal(4, vessel.StructureVersion);
+        Assert.Equal(new byte[] { 7 }, vessel.Data);
+        Assert.Equal(string.Empty, vessel.OwnerName);
+        Assert.Equal(MultiKerbal.Common.Vessels.VesselAccess.Shared, vessel.Access);
     }
 
     public void Dispose() => _server.Dispose();

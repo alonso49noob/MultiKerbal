@@ -17,8 +17,18 @@ namespace MultiKerbal.Client.Systems
 
         public PlayerInfo Get(int id) => _players.TryGetValue(id, out PlayerInfo player) ? player : null;
 
+        /// <summary>El jugador conectado con ese nombre, o null (los dueños de naves pueden no estar conectados).</summary>
+        public PlayerInfo FindByName(string name) =>
+            string.IsNullOrEmpty(name)
+                ? null
+                : _players.Values.FirstOrDefault(p => string.Equals(p.Name, name, System.StringComparison.OrdinalIgnoreCase));
+
         public static Color ColorOf(PlayerInfo player) =>
             player == null ? Color.white : Color.HSVToRGB(player.ColorHue, 0.5f, 1f);
+
+        /// <summary>Color del dueño de una nave: el suyo si está conectado, gris si no tiene dueño, blanco si no está.</summary>
+        public Color ColorOfOwner(string ownerName) =>
+            string.IsNullOrEmpty(ownerName) ? Color.gray : ColorOf(FindByName(ownerName));
 
         public void Clear()
         {

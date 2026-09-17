@@ -2,6 +2,7 @@ using MultiKerbal.Client.Systems;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Time;
+using MultiKerbal.Common.Vessels;
 using UnityEngine;
 
 namespace MultiKerbal.Client.UI
@@ -10,7 +11,7 @@ namespace MultiKerbal.Client.UI
     internal sealed class MultiplayerWindow
     {
         private const int WindowId = 0x4D4B0002;
-        private const float Width = 440f;
+        private const float Width = 500f;
         private const int MaxVesselRows = 8;
         private const string InputControl = "MultiKerbalChatInput";
         private const string InputLockId = "MultiKerbalChat";
@@ -18,6 +19,8 @@ namespace MultiKerbal.Client.UI
         private readonly ClientCore _core;
         private readonly GUI.WindowFunction _drawContents;
         private readonly WarpSettingsWindow _warpSettings;
+        private readonly LabelSettingsWindow _labelSettings;
+        private readonly VesselOwnershipWindow _ownership;
         private Rect _rect = new Rect(60f, 140f, Width, 0f);
         private Vector2 _chatScroll;
         private int _seenChatVersion = -1;
@@ -31,6 +34,8 @@ namespace MultiKerbal.Client.UI
             _core = core;
             _drawContents = DrawContents;
             _warpSettings = new WarpSettingsWindow(core);
+            _labelSettings = new LabelSettingsWindow(core);
+            _ownership = new VesselOwnershipWindow(core);
         }
 
         public bool Visible
@@ -43,6 +48,8 @@ namespace MultiKerbal.Client.UI
                 {
                     _inputFocused = false;
                     _warpSettings.Visible = false;
+                    _labelSettings.Visible = false;
+                    _ownership.Visible = false;
                     UpdateInputLock();
                 }
             }
@@ -66,6 +73,8 @@ namespace MultiKerbal.Client.UI
             _rect = GUILayout.Window(WindowId, _rect, _drawContents, "MultiKerbal — " + _core.ServerName, GUILayout.Width(Width));
             UpdateInputLock();
             _warpSettings.Draw();
+            _labelSettings.Draw();
+            _ownership.Draw();
         }
 
         private void DrawContents(int id)
@@ -78,6 +87,8 @@ namespace MultiKerbal.Client.UI
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Ajustes de warp"))
                 _warpSettings.Visible = !_warpSettings.Visible;
+            if (GUILayout.Button("Etiquetas"))
+                _labelSettings.Visible = !_labelSettings.Visible;
             if (GUILayout.Button("Desconectar"))
                 _core.Disconnect("Desconectado por el jugador");
             if (GUILayout.Button("Cerrar"))
@@ -108,11 +119,20 @@ namespace MultiKerbal.Client.UI
             }
         }
 
-        /// <summary>Naves del universo con su dueño; en vuelo, además, a qué distancia están.</summary>
+        /// <summary>Naves del universo: dueño y acceso, quién la pilota y, en vuelo, a qué distancia están.</summary>
         private void DrawVessels()
         {
             int total = _core.Vessels.TotalVessels;
-            GUILayout.Label($"Naves ({total}, tuyas: {_core.Vessels.OwnVessels})", UiStyles.Bold);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Naves ({total})", UiStyles.Bold);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button($"Tus naves nuevas: {VesselPermissions.Describe(_core.Settings.DefaultAccess)}", GUILayout.Width(210f)))
+            {
+                _core.Settings.DefaultAccess = NextAccess(_core.Settings.DefaultAccess);
+                _core.Settings.Save();
+            }
+
+            GUILayout.EndHorizontal();
             if (total == 0)
             {
                 GUILayout.Label("Ninguna todavía", UiStyles.Muted);
@@ -130,17 +150,47 @@ namespace MultiKerbal.Client.UI
                 }
 
                 shown++;
-                PlayerInfo owner = _core.Players.Get(tracked.OwnerId);
-                string ownerName = _core.Vessels.IsMine(tracked) ? "tuya" : owner?.Name ?? "sin dueño";
                 GUILayout.BeginHorizontal();
                 UiStyles.ColoredLabel(
                     string.IsNullOrEmpty(tracked.Name) ? "(sin nombre)" : tracked.Name,
-                    tracked.OwnerId == 0 ? Color.gray : PlayerRegistry.ColorOf(owner),
-                    GUILayout.Width(180f));
-                GUILayout.Label(ownerName, UiStyles.Muted, GUILayout.Width(110f));
+                    _core.Players.ColorOfOwner(tracked.OwnerName),
+                    GUILayout.Width(150f));
+                GUILayout.Label(DescribeOwner(tracked), UiStyles.Muted, GUILayout.Width(125f));
+                GUILayout.Label(DescribePilot(tracked), UiStyles.Muted, GUILayout.Width(85f));
                 GUILayout.Label(DescribeDistance(tracked, active), UiStyles.Muted);
+                if (GUILayout.Button("Dueño", GUILayout.Width(58f)))
+                    _ownership.Toggle(tracked.Id);
                 GUILayout.EndHorizontal();
             }
+        }
+
+        private static VesselAccess NextAccess(VesselAccess access)
+        {
+            switch (access)
+            {
+                case VesselAccess.Private:
+                    return VesselAccess.Shared;
+                case VesselAccess.Shared:
+                    return VesselAccess.Public;
+                default:
+                    return VesselAccess.Private;
+            }
+        }
+
+        private string DescribeOwner(Vessels.TrackedVessel tracked)
+        {
+            if (!VesselPermissions.HasOwner(tracked.OwnerName))
+                return "sin dueño";
+            string owner = _core.Vessels.IsOwnedByMe(tracked) ? "tuya" : tracked.OwnerName;
+            return $"{owner} · {VesselPermissions.Describe(tracked.Access)}";
+        }
+
+        private string DescribePilot(Vessels.TrackedVessel tracked)
+        {
+            if (_core.Vessels.IsPilotedByMe(tracked))
+                return "la pilotas";
+            PlayerInfo pilot = _core.Players.Get(tracked.ControllerId);
+            return pilot != null ? $"pilota {pilot.Name}" : string.Empty;
         }
 
         private void DrawChat()

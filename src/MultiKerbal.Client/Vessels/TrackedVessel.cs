@@ -1,5 +1,6 @@
 using System;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Client.Vessels
 {
@@ -18,8 +19,16 @@ namespace MultiKerbal.Client.Vessels
 
         public Guid Id { get; }
 
-        /// <summary>Jugador que la controla (0 = nadie).</summary>
-        public int OwnerId { get; set; }
+        /// <summary>Jugador que la pilota ahora (0 = nadie). Solo él envía su estado.</summary>
+        public int ControllerId { get; set; }
+
+        /// <summary>Se pidió el control y aún no hay respuesta: si llega sin concederse, hay que salir de la nave.</summary>
+        public bool ControlPending { get; set; }
+
+        /// <summary>Nombre del dueño (vacío = sin dueño).</summary>
+        public string OwnerName { get; set; } = string.Empty;
+
+        public VesselAccess Access { get; set; } = VesselAccess.Shared;
 
         public string Name { get; set; } = string.Empty;
 

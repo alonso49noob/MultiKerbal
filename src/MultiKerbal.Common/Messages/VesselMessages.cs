@@ -1,5 +1,6 @@
 using System;
 using MultiKerbal.Common.Serialization;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Common.Messages
 {
@@ -13,8 +14,14 @@ namespace MultiKerbal.Common.Messages
 
         public Guid VesselId;
 
-        /// <summary>Servidor → cliente: jugador que la controla (0 = nadie). El servidor ignora el valor del cliente.</summary>
-        public int OwnerId;
+        /// <summary>Servidor → cliente: jugador que la pilota ahora (0 = nadie). El servidor ignora el valor del cliente.</summary>
+        public int ControllerId;
+
+        /// <summary>Nombre del dueño (vacío = sin dueño). Del cliente solo se usa al crear la nave: pasa a ser de quien la publica.</summary>
+        public string OwnerName;
+
+        /// <summary>Del cliente solo se usa al crear la nave (su acceso por defecto).</summary>
+        public VesselAccess Access;
 
         public string VesselName;
 
@@ -29,7 +36,9 @@ namespace MultiKerbal.Common.Messages
         public void Write(PacketWriter writer)
         {
             writer.WriteGuid(VesselId);
-            writer.WriteInt32(OwnerId);
+            writer.WriteInt32(ControllerId);
+            writer.WriteString(OwnerName);
+            writer.WriteByte((byte)Access);
             writer.WriteString(VesselName);
             writer.WriteInt32(StructureVersion);
             writer.WriteBytes(Data);
@@ -38,7 +47,9 @@ namespace MultiKerbal.Common.Messages
         public void Read(PacketReader reader)
         {
             VesselId = reader.ReadGuid();
-            OwnerId = reader.ReadInt32();
+            ControllerId = reader.ReadInt32();
+            OwnerName = reader.ReadString();
+            Access = (VesselAccess)reader.ReadByte();
             VesselName = reader.ReadString();
             StructureVersion = reader.ReadInt32();
             Data = reader.ReadBytes();
@@ -143,31 +154,31 @@ namespace MultiKerbal.Common.Messages
         public void Read(PacketReader reader) => VesselId = reader.ReadGuid();
     }
 
-    /// <summary>Servidor → cliente. Quién controla la nave (0 = nadie).</summary>
-    public sealed class VesselOwnershipMessage : IMessage
+    /// <summary>Servidor → cliente. Quién pilota la nave (0 = nadie). También responde a una petición denegada.</summary>
+    public sealed class VesselControlMessage : IMessage
     {
-        public MessageType Type => MessageType.VesselOwnership;
+        public MessageType Type => MessageType.VesselControl;
 
         public Guid VesselId;
-        public int OwnerId;
+        public int ControllerId;
 
         public void Write(PacketWriter writer)
         {
             writer.WriteGuid(VesselId);
-            writer.WriteInt32(OwnerId);
+            writer.WriteInt32(ControllerId);
         }
 
         public void Read(PacketReader reader)
         {
             VesselId = reader.ReadGuid();
-            OwnerId = reader.ReadInt32();
+            ControllerId = reader.ReadInt32();
         }
     }
 
-    /// <summary>Cliente → servidor. Tomar (si no tiene dueño) o soltar el control de una nave.</summary>
-    public sealed class VesselOwnershipRequestMessage : IMessage
+    /// <summary>Cliente → servidor. Tomar (si nadie la pilota y el acceso lo permite) o soltar el control de una nave.</summary>
+    public sealed class VesselControlRequestMessage : IMessage
     {
-        public MessageType Type => MessageType.VesselOwnershipRequest;
+        public MessageType Type => MessageType.VesselControlRequest;
 
         public Guid VesselId;
         public bool Acquire;
@@ -182,6 +193,60 @@ namespace MultiKerbal.Common.Messages
         {
             VesselId = reader.ReadGuid();
             Acquire = reader.ReadBool();
+        }
+    }
+
+    /// <summary>Servidor → cliente. Dueño y acceso de una nave tras un cambio (o la respuesta a una petición denegada).</summary>
+    public sealed class VesselOwnerMessage : IMessage
+    {
+        public MessageType Type => MessageType.VesselOwner;
+
+        public Guid VesselId;
+
+        /// <summary>Vacío = sin dueño.</summary>
+        public string OwnerName;
+
+        public VesselAccess Access;
+
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteGuid(VesselId);
+            writer.WriteString(OwnerName);
+            writer.WriteByte((byte)Access);
+        }
+
+        public void Read(PacketReader reader)
+        {
+            VesselId = reader.ReadGuid();
+            OwnerName = reader.ReadString();
+            Access = (VesselAccess)reader.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Cliente → servidor. Cambiar el dueño y el acceso de una nave. Solo puede pedirlo su dueño o, si no tiene,
+    /// cualquiera que la reclame para sí. Nuevo dueño: uno mismo, otro jugador conectado (regalo) o vacío (sin dueño).
+    /// </summary>
+    public sealed class VesselOwnerRequestMessage : IMessage
+    {
+        public MessageType Type => MessageType.VesselOwnerRequest;
+
+        public Guid VesselId;
+        public string OwnerName;
+        public VesselAccess Access;
+
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteGuid(VesselId);
+            writer.WriteString(OwnerName);
+            writer.WriteByte((byte)Access);
+        }
+
+        public void Read(PacketReader reader)
+        {
+            VesselId = reader.ReadGuid();
+            OwnerName = reader.ReadString();
+            Access = (VesselAccess)reader.ReadByte();
         }
     }
 }

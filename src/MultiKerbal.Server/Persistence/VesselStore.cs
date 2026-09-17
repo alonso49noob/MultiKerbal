@@ -1,5 +1,6 @@
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Serialization;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Server.Persistence;
 
@@ -9,14 +10,19 @@ internal sealed class StoredVessel
 
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Versión de estructura enviada por el dueño (ver <see cref="VesselProtoMessage.StructureVersion"/>).</summary>
+    /// <summary>Versión de estructura enviada por quien la pilota (ver <see cref="VesselProtoMessage.StructureVersion"/>).</summary>
     public int StructureVersion { get; set; }
 
     /// <summary>Definición comprimida tal como la envió el cliente (el servidor no la interpreta).</summary>
     public byte[] Data { get; set; } = [];
 
-    /// <summary>Jugador que la controla en esta sesión (0 = nadie). No se guarda en disco.</summary>
-    public int OwnerId { get; set; }
+    /// <summary>Nombre del jugador dueño (vacío = sin dueño). Se guarda en disco.</summary>
+    public string OwnerName { get; set; } = string.Empty;
+
+    public VesselAccess Access { get; set; } = VesselAccess.Shared;
+
+    /// <summary>Jugador que la pilota en esta sesión (0 = nadie). No se guarda en disco.</summary>
+    public int ControllerId { get; set; }
 
     public VesselUpdateMessage? LastUpdate { get; set; }
 
@@ -26,8 +32,8 @@ internal sealed class StoredVessel
 /// <summary>Naves del universo: un archivo por nave en Universe/Vessels/{id}.vessel, con escritura atómica.</summary>
 internal sealed class VesselStore
 {
-    /// <summary>1: sin versión de estructura. 2: con versión de estructura.</summary>
-    private const int FileVersion = 2;
+    /// <summary>1: sin versión de estructura. 2: con versión de estructura. 3: con dueño y acceso.</summary>
+    private const int FileVersion = 3;
     private const string Extension = ".vessel";
 
     private readonly Dictionary<Guid, StoredVessel> _vessels = new();
@@ -112,6 +118,8 @@ internal sealed class VesselStore
         writer.WriteGuid(vessel.Id);
         writer.WriteString(vessel.Name);
         writer.WriteInt32(vessel.StructureVersion);
+        writer.WriteString(vessel.OwnerName);
+        writer.WriteByte((byte)vessel.Access);
         writer.WriteBytes(vessel.Data);
         writer.WriteBool(vessel.LastUpdate != null);
         vessel.LastUpdate?.Write(writer);
@@ -128,11 +136,24 @@ internal sealed class VesselStore
         Guid id = reader.ReadGuid();
         string name = reader.ReadString() ?? string.Empty;
         int structureVersion = version >= 2 ? reader.ReadInt32() : 0;
+        // Las naves de versiones anteriores no tienen dueño: cualquiera puede reclamarlas.
+        string owner = version >= 3 ? reader.ReadString() ?? string.Empty : string.Empty;
+        var access = version >= 3 ? (VesselAccess)reader.ReadByte() : VesselAccess.Shared;
         byte[] data = reader.ReadBytes() ?? [];
         if (id == Guid.Empty)
             throw new ProtocolException("Nave sin identificador");
+        if (!VesselPermissions.IsValid(access))
+            access = VesselAccess.Shared;
 
-        var vessel = new StoredVessel { Id = id, Name = name, StructureVersion = structureVersion, Data = data };
+        var vessel = new StoredVessel
+        {
+            Id = id,
+            Name = name,
+            StructureVersion = structureVersion,
+            OwnerName = owner,
+            Access = access,
+            Data = data,
+        };
         if (reader.ReadBool())
         {
             var update = new VesselUpdateMessage();

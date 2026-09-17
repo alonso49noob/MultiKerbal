@@ -2,17 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using KSP.Localization;
+using KSP.UI.Screens;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Net;
+using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Client.Vessels
 {
     /// <summary>
     /// Mantiene las naves de la partida local alineadas con el servidor.
     /// <list type="bullet">
-    /// <item>Naves propias: se publican al crearse o cambiar de estructura y se envía su estado periódicamente.</item>
-    /// <item>Naves ajenas: marionetas empaquetadas que siguen el último estado recibido.</item>
+    /// <item>Naves que pilotamos: se publican al crearse o cambiar de estructura y se envía su estado periódicamente.</item>
+    /// <item>Las demás: marionetas empaquetadas que siguen el último estado recibido.</item>
     /// </list>
+    /// "Local" significa que la pilotamos ahora (el control), que es distinto de ser su dueño (ver <see cref="VesselPermissions"/>).
     /// Solo actúa en escenas con naves vivas (Centro Espacial, estación de seguimiento y vuelo).
     /// </summary>
     internal sealed class VesselSyncSystem
@@ -26,7 +29,9 @@ namespace MultiKerbal.Client.Vessels
         private const float NoticeSeconds = 5f;
 
         private readonly Func<int> _localPlayerId;
+        private readonly Func<string> _localPlayerName;
         private readonly Func<int, string> _playerName;
+        private readonly Func<VesselAccess> _defaultAccess;
         private readonly Action<IMessage, Delivery> _send;
         private readonly Dictionary<Guid, TrackedVessel> _tracked = new Dictionary<Guid, TrackedVessel>();
         private readonly HashSet<Guid> _removed = new HashSet<Guid>();
@@ -40,35 +45,53 @@ namespace MultiKerbal.Client.Vessels
         private Guid _previousActiveVesselId;
         private int _suppressDestroyEvents;
         private bool _eventsRegistered;
+        private Guid _guardedVessel;
+        private bool _guardBlockedButtons;
 
-        public VesselSyncSystem(Func<int> localPlayerId, Func<int, string> playerName, Action<IMessage, Delivery> send)
+        public VesselSyncSystem(
+            Func<int> localPlayerId,
+            Func<string> localPlayerName,
+            Func<int, string> playerName,
+            Func<VesselAccess> defaultAccess,
+            Action<IMessage, Delivery> send)
         {
             _localPlayerId = localPlayerId;
+            _localPlayerName = localPlayerName;
             _playerName = playerName;
+            _defaultAccess = defaultAccess;
             _send = send;
         }
 
         public int TotalVessels => _tracked.Count;
 
-        public int OwnVessels
-        {
-            get
-            {
-                int count = 0;
-                foreach (TrackedVessel tracked in _tracked.Values)
-                {
-                    if (IsLocal(tracked))
-                        count++;
-                }
-
-                return count;
-            }
-        }
-
         /// <summary>Naves conocidas del universo (para la interfaz).</summary>
         public IEnumerable<TrackedVessel> Tracked => _tracked.Values;
 
-        public bool IsMine(TrackedVessel tracked) => IsLocal(tracked);
+        public TrackedVessel Find(Guid id) => _tracked.TryGetValue(id, out TrackedVessel tracked) ? tracked : null;
+
+        /// <summary>La pilotamos nosotros ahora.</summary>
+        public bool IsPilotedByMe(TrackedVessel tracked) => IsLocal(tracked);
+
+        public bool IsOwnedByMe(TrackedVessel tracked) => VesselPermissions.IsOwner(tracked.OwnerName, _localPlayerName());
+
+        /// <summary>La pilota otro jugador ahora.</summary>
+        public bool IsPilotedByOther(TrackedVessel tracked) => tracked.ControllerId != 0 && !IsLocal(tracked);
+
+        public bool CanPilot(TrackedVessel tracked) =>
+            !IsPilotedByOther(tracked) && VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, _localPlayerName());
+
+        public bool CanRemove(TrackedVessel tracked) =>
+            IsLocal(tracked)
+            || (tracked.ControllerId == 0 && VesselPermissions.CanRemove(tracked.OwnerName, tracked.Access, _localPlayerName()));
+
+        public bool CanChangeOwnership(TrackedVessel tracked) =>
+            VesselPermissions.CanChangeOwnership(tracked.OwnerName, _localPlayerName());
+
+        /// <summary>Pide al servidor otro dueño (uno mismo, otro jugador o vacío) y acceso. El cambio llega de vuelta si se acepta.</summary>
+        public void RequestOwnerChange(TrackedVessel tracked, string ownerName, VesselAccess access)
+        {
+            _send(new VesselOwnerRequestMessage { VesselId = tracked.Id, OwnerName = ownerName ?? string.Empty, Access = access }, Delivery.Reliable);
+        }
 
         /// <summary>La nave en la escena actual, o null si no está cargada.</summary>
         public Vessel VesselOf(TrackedVessel tracked) => LiveVessel(tracked);
@@ -117,8 +140,11 @@ namespace MultiKerbal.Client.Vessels
                 case VesselRemoveMessage remove:
                     OnRemove(remove);
                     break;
-                case VesselOwnershipMessage ownership:
-                    OnOwnership(ownership);
+                case VesselControlMessage control:
+                    OnControl(control);
+                    break;
+                case VesselOwnerMessage owner:
+                    OnOwner(owner);
                     break;
             }
         }
@@ -144,10 +170,13 @@ namespace MultiKerbal.Client.Vessels
             if (now >= _nextScan)
             {
                 _nextScan = now + ScanIntervalSeconds;
+                RemoveSpaceObjects();
                 PublishLocalVessels(now);
+                ReleaseLeftVessels();
                 SpawnRemoteVessels(now);
             }
 
+            GuardTrackingStationButtons();
             TrackActiveVessel();
             SendLocalUpdates(now);
             PositionPuppets();
@@ -188,6 +217,19 @@ namespace MultiKerbal.Client.Vessels
             spawner.spawnInterval = float.MaxValue;
         }
 
+        /// <summary>KSP genera algunos asteroides y cometas al crear la partida, antes de poder impedirlo: solo existirían para este jugador.</summary>
+        private void RemoveSpaceObjects()
+        {
+            foreach (Vessel vessel in FlightGlobals.Vessels.ToList())
+            {
+                if (vessel == null || vessel.vesselType != VesselType.SpaceObject || vessel == FlightGlobals.ActiveVessel)
+                    continue;
+
+                ClientLog.Info($"Asteroide local eliminado: {vessel.vesselName}");
+                RemoveSilently(vessel);
+            }
+        }
+
         private static Vessel LiveVessel(TrackedVessel tracked)
         {
             Vessel vessel = tracked.Vessel;
@@ -200,7 +242,7 @@ namespace MultiKerbal.Client.Vessels
             return vessel != null && vessel.state != Vessel.State.DEAD ? vessel : null;
         }
 
-        private bool IsLocal(TrackedVessel tracked) => tracked.OwnerId != 0 && tracked.OwnerId == _localPlayerId();
+        private bool IsLocal(TrackedVessel tracked) => tracked.ControllerId != 0 && tracked.ControllerId == _localPlayerId();
 
         private TrackedVessel GetOrTrack(Guid id)
         {
@@ -240,7 +282,9 @@ namespace MultiKerbal.Client.Vessels
             _removed.Remove(message.VesselId);
             TrackedVessel tracked = GetOrTrack(message.VesselId);
             tracked.Name = message.VesselName ?? string.Empty;
-            SetOwner(tracked, message.OwnerId);
+            tracked.OwnerName = message.OwnerName ?? string.Empty;
+            tracked.Access = message.Access;
+            SetController(tracked, message.ControllerId);
             if (IsLocal(tracked))
                 return;
 
@@ -288,16 +332,27 @@ namespace MultiKerbal.Client.Vessels
                 RemoveSilently(vessel);
         }
 
-        private void OnOwnership(VesselOwnershipMessage message)
+        private void OnControl(VesselControlMessage message)
         {
             if (_tracked.TryGetValue(message.VesselId, out TrackedVessel tracked))
-                SetOwner(tracked, message.OwnerId);
+                SetController(tracked, message.ControllerId);
         }
 
-        private void SetOwner(TrackedVessel tracked, int ownerId)
+        private void OnOwner(VesselOwnerMessage message)
+        {
+            if (!_tracked.TryGetValue(message.VesselId, out TrackedVessel tracked))
+                return;
+
+            tracked.OwnerName = message.OwnerName ?? string.Empty;
+            tracked.Access = message.Access;
+        }
+
+        private void SetController(TrackedVessel tracked, int controllerId)
         {
             bool wasLocal = IsLocal(tracked);
-            tracked.OwnerId = ownerId;
+            bool wasPending = tracked.ControlPending;
+            tracked.ControllerId = controllerId;
+            tracked.ControlPending = false;
             bool isLocal = IsLocal(tracked);
             if (!IsLiveScene())
                 return;
@@ -317,8 +372,8 @@ namespace MultiKerbal.Client.Vessels
                 Adopt(tracked, vessel);
             }
 
-            // Pilotando una nave que controla otro jugador (petición denegada o perdida).
-            if (ownerId != 0 && !isLocal && vessel == FlightGlobals.ActiveVessel)
+            // Pilotando una nave que no controlamos: la pilota otro, se nos denegó o se nos retiró el permiso.
+            if (!isLocal && vessel == FlightGlobals.ActiveVessel && (controllerId != 0 || wasLocal || wasPending))
                 LeaveRemoteVessel(tracked);
         }
 
@@ -372,7 +427,9 @@ namespace MultiKerbal.Client.Vessels
                 {
                     // Nave nueva en esta partida (lanzamiento, separación de etapas, EVA, bandera): se publica y es nuestra.
                     tracked = GetOrTrack(vessel.id);
-                    tracked.OwnerId = localPlayerId;
+                    tracked.ControllerId = localPlayerId;
+                    tracked.OwnerName = _localPlayerName();
+                    tracked.Access = _defaultAccess();
                     tracked.Vessel = vessel;
                     Publish(tracked, vessel, now);
                     continue;
@@ -390,34 +447,159 @@ namespace MultiKerbal.Client.Vessels
         private void Publish(TrackedVessel tracked, Vessel vessel, double now)
         {
             tracked.NextProtoRefresh = now + ProtoRefreshSeconds;
-            byte[] data;
-            try
-            {
-                data = VesselCodec.Encode(vessel);
-            }
-            catch (Exception ex)
-            {
-                ClientLog.Warn($"No se pudo serializar la nave {vessel.vesselName}: {ex}");
+            byte[] data = TryEncode(vessel);
+            if (data == null)
                 return;
-            }
 
             // Solo un cambio de estructura hace que los demás recarguen la nave; el refresco periódico no.
             if (tracked.StructureChanged(vessel))
                 tracked.StructureVersion++;
 
-            tracked.Proto = data;
             tracked.Name = Localizer.Format(vessel.vesselName);
             tracked.RememberPublished(vessel);
             tracked.NextUpdate = 0;
+            SendProto(tracked, data);
+        }
+
+        private void SendProto(TrackedVessel tracked, byte[] data)
+        {
+            tracked.Proto = data;
             _send(
                 new VesselProtoMessage
                 {
-                    VesselId = vessel.id,
+                    VesselId = tracked.Id,
+                    OwnerName = tracked.OwnerName,
+                    Access = tracked.Access,
                     VesselName = tracked.Name,
                     StructureVersion = tracked.StructureVersion,
                     Data = data,
                 },
                 Delivery.Reliable);
+        }
+
+        private static byte[] TryEncode(Vessel vessel)
+        {
+            try
+            {
+                return VesselCodec.Encode(vessel);
+            }
+            catch (Exception ex)
+            {
+                ClientLog.Warn($"No se pudo serializar la nave {vessel.vesselName}: {ex}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Las naves que ya no se pilotan ni se simulan aquí se sueltan para que otro jugador pueda tomarlas (si el acceso lo permite).
+        /// Se quedan las que siguen cargadas cerca de la nave activa o van en vuelo (su física corre en esta partida).
+        /// </summary>
+        private void ReleaseLeftVessels()
+        {
+            Vessel active = HighLogic.LoadedScene == GameScenes.FLIGHT ? FlightGlobals.ActiveVessel : null;
+            _scratch.Clear();
+            _scratch.AddRange(_tracked.Values);
+            foreach (TrackedVessel tracked in _scratch)
+            {
+                if (!IsLocal(tracked))
+                    continue;
+
+                Vessel vessel = LiveVessel(tracked);
+                if (vessel == null || vessel == active || vessel.loaded || !IsStable(vessel.situation))
+                    continue;
+
+                Release(tracked, vessel);
+            }
+        }
+
+        private static bool IsStable(Vessel.Situations situation)
+        {
+            switch (situation)
+            {
+                case Vessel.Situations.LANDED:
+                case Vessel.Situations.SPLASHED:
+                case Vessel.Situations.PRELAUNCH:
+                case Vessel.Situations.ORBITING:
+                case Vessel.Situations.ESCAPING:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void Release(TrackedVessel tracked, Vessel vessel)
+        {
+            // Todo por TCP y en orden: el servidor solo acepta la definición y el estado mientras la nave aún es nuestra.
+            // La definición va con la misma versión de estructura (combustible, tripulación...: nadie la recarga).
+            byte[] data = TryEncode(vessel);
+            if (data != null)
+                SendProto(tracked, data);
+
+            VesselUpdateMessage last = VesselState.Capture(vessel, Planetarium.GetUniversalTime());
+            _send(last, Delivery.Reliable);
+            _send(new VesselControlRequestMessage { VesselId = tracked.Id, Acquire = false }, Delivery.Reliable);
+
+            // Sin esperar la respuesta, para no volver a publicarla mientras tanto (el servidor nos la devolvería).
+            tracked.LastUpdate = last;
+            tracked.RemoteStructureVersion = tracked.StructureVersion;
+            SetController(tracked, 0);
+            ClientLog.Info($"Nave soltada: {tracked.Name}");
+        }
+
+        /// <summary>
+        /// En la estación de seguimiento se desactivan "Volar" (si otro la pilota o es privada) y "Recuperar"/"Borrar"
+        /// (si no hay permiso): así no se entra en una nave para que el mod te saque, ni se borra una nave ajena.
+        /// KSP solo actualiza los botones al seleccionar, así que se comprueba cada frame.
+        /// </summary>
+        private void GuardTrackingStationButtons()
+        {
+            SpaceTracking tracking = HighLogic.LoadedScene == GameScenes.TRACKSTATION ? SpaceTracking.Instance : null;
+            if (tracking == null || tracking.FlyButton == null)
+            {
+                _guardedVessel = Guid.Empty;
+                _guardBlockedButtons = false;
+                return;
+            }
+
+            Vessel selected = tracking.SelectedVessel;
+            TrackedVessel tracked = selected != null ? Find(selected.id) : null;
+            bool blockFly = tracked != null && !IsLocal(tracked) && !CanPilot(tracked);
+            bool blockRemove = tracked != null && !CanRemove(tracked);
+            Guid selectedId = selected != null ? selected.id : Guid.Empty;
+
+            if (blockFly)
+                tracking.FlyButton.interactable = false;
+            if (blockRemove)
+            {
+                if (tracking.RecoverButton != null)
+                    tracking.RecoverButton.interactable = false;
+                if (tracking.DeleteButton != null)
+                    tracking.DeleteButton.interactable = false;
+            }
+
+            bool blocked = blockFly || blockRemove;
+            if (blocked && selectedId != _guardedVessel)
+            {
+                string reason = blockFly ? DescribeCannotPilot(tracked) : $"Solo {tracked.OwnerName} puede recuperar o borrar \"{tracked.Name}\"";
+                ScreenMessages.PostScreenMessage(reason.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
+            }
+            else if (!blocked && _guardBlockedButtons && selectedId == _guardedVessel && selected != null)
+            {
+                // Se levantó el bloqueo sin cambiar de selección: KSP recalcula sus botones (sin reactivar lo que no toca).
+                tracking.SetVessel(selected, true);
+            }
+
+            _guardedVessel = selectedId;
+            _guardBlockedButtons = blocked;
+        }
+
+        private string DescribeCannotPilot(TrackedVessel tracked)
+        {
+            if (IsPilotedByOther(tracked))
+                return $"\"{tracked.Name}\" la está pilotando {_playerName(tracked.ControllerId)}";
+            if (!VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, _localPlayerName()))
+                return $"\"{tracked.Name}\" es privada: solo {tracked.OwnerName} puede pilotarla";
+            return $"No se pudo tomar el control de \"{tracked.Name}\"";
         }
 
         private void SpawnRemoteVessels(double now)
@@ -462,7 +644,8 @@ namespace MultiKerbal.Client.Vessels
                 if (vessel == null)
                 {
                     tracked.FailedVersion = tracked.ProtoVersion;
-                    string notice = $"No se pudo cargar la nave \"{tracked.Name}\" de {_playerName(tracked.OwnerId)}: {error}";
+                    string owner = VesselPermissions.HasOwner(tracked.OwnerName) ? $" de {tracked.OwnerName}" : string.Empty;
+                    string notice = $"No se pudo cargar la nave \"{tracked.Name}\"{owner}: {error}";
                     ClientLog.Warn(notice);
                     ScreenMessages.PostScreenMessage(notice.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
                     continue;
@@ -493,11 +676,12 @@ namespace MultiKerbal.Client.Vessels
             if (!_tracked.TryGetValue(active.id, out TrackedVessel tracked) || IsLocal(tracked))
                 return;
 
-            if (tracked.OwnerId == 0)
+            if (CanPilot(tracked))
             {
-                // Sin dueño: se pide el control. Si el servidor lo deniega, SetOwner nos saca de ella.
+                // Nadie la pilota y el acceso lo permite: se pide el control. Si se deniega, SetController nos saca de ella.
                 VesselState.ReleasePuppet(active);
-                _send(new VesselOwnershipRequestMessage { VesselId = active.id, Acquire = true }, Delivery.Reliable);
+                tracked.ControlPending = true;
+                _send(new VesselControlRequestMessage { VesselId = active.id, Acquire = true }, Delivery.Reliable);
             }
             else
             {
@@ -507,7 +691,7 @@ namespace MultiKerbal.Client.Vessels
 
         private void LeaveRemoteVessel(TrackedVessel tracked)
         {
-            string text = $"\"{tracked.Name}\" la controla {_playerName(tracked.OwnerId)}";
+            string text = DescribeCannotPilot(tracked);
             ScreenMessages.PostScreenMessage(text.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
 
             Vessel previous = _previousActiveVesselId == Guid.Empty ? null : FlightGlobals.FindVessel(_previousActiveVesselId);
@@ -597,15 +781,16 @@ namespace MultiKerbal.Client.Vessels
             if (proto == null || !_tracked.TryGetValue(proto.vesselID, out TrackedVessel tracked))
                 return;
 
-            if (tracked.OwnerId == 0 || IsLocal(tracked))
+            if (CanRemove(tracked))
             {
                 ForgetAndPublishRemoval(tracked);
                 return;
             }
 
-            // Es de otro jugador: el servidor la mantiene, así que vuelve a aparecer.
+            // Sin permiso (la pilota otro o no es nuestra): el servidor la mantiene, así que vuelve a aparecer.
             tracked.Vessel = null;
             tracked.SpawnedVersion = -1;
+            ScreenMessages.PostScreenMessage($"\"{tracked.Name}\" no es tuya: volverá a aparecer".Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
         }
 
         private void ForgetAndPublishRemoval(TrackedVessel tracked)
