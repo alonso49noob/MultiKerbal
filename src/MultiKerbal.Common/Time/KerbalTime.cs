@@ -18,7 +18,8 @@ namespace MultiKerbal.Common.Time
             long year = totalDays / DaysPerYear + 1;
             long day = totalDays % DaysPerYear + 1;
             long secondsOfDay = totalSeconds % SecondsPerDay;
-            return $"Año {year}, día {day}, {secondsOfDay / 3600:00}:{secondsOfDay / 60 % 60:00}:{secondsOfDay % 60:00}";
+            string clock = $"{secondsOfDay / 3600:00}:{secondsOfDay / 60 % 60:00}:{secondsOfDay % 60:00}";
+            return Lang.T($"Año {year}, día {day}, {clock}", $"Year {year}, day {day}, {clock}");
         }
     }
 }

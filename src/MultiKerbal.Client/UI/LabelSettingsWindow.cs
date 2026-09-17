@@ -28,7 +28,7 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
-            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Etiquetas de naves", GUILayout.Width(Width));
+            _rect = GUILayout.Window(WindowId, _rect, _drawContents, Loc.T("Etiquetas de naves", "Vessel labels"), GUILayout.Width(Width));
         }
 
         private void DrawContents(int id)
@@ -36,7 +36,9 @@ namespace MultiKerbal.Client.UI
             LabelFilter filter = _core.Settings.Labels;
             bool changed = false;
 
-            bool enabled = GUILayout.Toggle(filter.Enabled, "Mostrar nombre y dueño sobre las naves de otros jugadores");
+            bool enabled = GUILayout.Toggle(filter.Enabled, Loc.T(
+                "Mostrar nombre y dueño sobre las naves de otros jugadores",
+                "Show name and owner above other players' vessels"));
             if (enabled != filter.Enabled)
             {
                 filter.Enabled = enabled;
@@ -45,7 +47,7 @@ namespace MultiKerbal.Client.UI
 
             GUILayout.Space(6f);
             GUI.enabled = filter.Enabled;
-            GUILayout.Label("Solo en estos tipos de nave:", UiStyles.Bold);
+            GUILayout.Label(Loc.T("Solo en estos tipos de nave:", "Only on these vessel types:"), UiStyles.Bold);
 
             LabelCategoryInfo[] categories = LabelFilter.Categories;
             for (int row = 0; row < categories.Length; row += Columns)
@@ -66,18 +68,24 @@ namespace MultiKerbal.Client.UI
             }
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Todos"))
+            if (GUILayout.Button(Loc.T("Todos", "All")))
                 changed |= filter.SetAll(true);
-            if (GUILayout.Button("Ninguno"))
+            if (GUILayout.Button(Loc.T("Ninguno", "None")))
                 changed |= filter.SetAll(false);
             GUILayout.EndHorizontal();
             GUI.enabled = true;
 
             GUILayout.Space(6f);
-            GUILayout.Label("El tipo es el que eligió el dueño al ponerle nombre a la nave.", UiStyles.Muted);
-            GUILayout.Label($"En vuelo solo se etiquetan las naves a menos de {RemoteVesselLabels.MaxFlightDistance / 1000.0:0} km; en el mapa, todas.", UiStyles.Muted);
+            GUILayout.Label(
+                Loc.T("El tipo es el que eligió el dueño al ponerle nombre a la nave.",
+                      "The type is the one its owner picked when naming the vessel."),
+                UiStyles.Muted);
+            GUILayout.Label(
+                Loc.T($"En vuelo solo se etiquetan las naves a menos de {RemoteVesselLabels.MaxFlightDistance / 1000.0:0} km; en el mapa, todas.",
+                      $"In flight only vessels closer than {RemoteVesselLabels.MaxFlightDistance / 1000.0:0} km are labelled; in the map, all of them."),
+                UiStyles.Muted);
 
-            if (GUILayout.Button("Cerrar"))
+            if (GUILayout.Button(Loc.T("Cerrar", "Close")))
                 Visible = false;
 
             if (changed)

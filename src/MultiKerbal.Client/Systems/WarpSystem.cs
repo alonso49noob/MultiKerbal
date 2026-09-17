@@ -77,8 +77,10 @@ namespace MultiKerbal.Client.Systems
                 WarpPolicyDecision outside = WarpPolicyEvaluator.Evaluate(settings, NeutralContext);
                 bool deny = outside.AutoDeny && ClientScenes.IsGameplay;
                 PolicyStatus = deny
-                    ? $"Aquí también rechazas el warp de los demás ({outside.Reason})."
-                    : "En esta escena no participas en el warp: no limitas a nadie.";
+                    ? Loc.T($"Aquí también rechazas el warp de los demás ({outside.Reason}).",
+                            $"Here you also refuse the other players' warp ({outside.Reason}).")
+                    : Loc.T("En esta escena no participas en el warp: no limitas a nadie.",
+                            "In this scene you are out of the warp vote: you hold nobody back.");
                 Send(deny, 1.0, WarpMode.Rails, 1.0, deny);
                 return;
             }
@@ -122,12 +124,20 @@ namespace MultiKerbal.Client.Systems
         private static string Describe(WarpPolicy settings, WarpPolicyDecision decision)
         {
             if (decision.AutoDeny)
-                return $"Ahora rechazarías automáticamente el warp de los demás ({decision.Reason}).";
+                return Loc.T(
+                    $"Ahora rechazarías automáticamente el warp de los demás ({decision.Reason}).",
+                    $"Right now you would automatically refuse the other players' warp ({decision.Reason}).");
             if (decision.AcceptUpTo > 1.0)
-                return $"Ahora aceptarías automáticamente el warp de los demás hasta x{decision.AcceptUpTo:0}.";
+                return Loc.T(
+                    $"Ahora aceptarías automáticamente el warp de los demás hasta x{decision.AcceptUpTo:0}.",
+                    $"Right now you would automatically accept the other players' warp up to x{decision.AcceptUpTo:0}.");
             if (settings.AutoAccept)
-                return $"Ahora no lo aceptarías automáticamente ({decision.Reason}): tendrías que subir el warp tú.";
-            return "Para acompañar el warp de los demás tendrás que subirlo tú.";
+                return Loc.T(
+                    $"Ahora no lo aceptarías automáticamente ({decision.Reason}): tendrías que subir el warp tú.",
+                    $"Right now you would not accept it automatically ({decision.Reason}): you would have to warp yourself.");
+            return Loc.T(
+                "Para acompañar el warp de los demás tendrás que subirlo tú.",
+                "To follow the other players' warp you will have to warp yourself.");
         }
 
         private void UpdateClamp(double now)
@@ -146,7 +156,9 @@ namespace MultiKerbal.Client.Systems
             {
                 _decision.CancelDesire();
                 ResetClamp();
-                Post(expired ? "Nadie más ha acelerado el tiempo: petición de warp cancelada" : "Petición de warp cancelada");
+                Post(expired
+                    ? Loc.T("Nadie más ha acelerado el tiempo: petición de warp cancelada", "Nobody else warped: warp request cancelled")
+                    : Loc.T("Petición de warp cancelada", "Warp request cancelled"));
                 return;
             }
 
@@ -157,7 +169,9 @@ namespace MultiKerbal.Client.Systems
 
             _clampNoticeShown = true;
             _clampNoticeLimitedBy = limitedBy;
-            Post($"{ClampNotice(limitedBy)}. Se cancela en {RequestTimeoutSeconds:0} s si nadie acelera.");
+            Post(Loc.T(
+                $"{ClampNotice(limitedBy)}. Se cancela en {RequestTimeoutSeconds:0} s si nadie acelera.",
+                $"{ClampNotice(limitedBy)}. It is cancelled in {RequestTimeoutSeconds:0} s if nobody warps."));
         }
 
         private void UpdateAcceptNotice()
@@ -172,7 +186,9 @@ namespace MultiKerbal.Client.Systems
                 return;
 
             _acceptNoticeShown = true;
-            Post($"Aceptando automáticamente el warp de otro jugador (x{_clock.Rate:0})");
+            Post(Loc.T(
+                $"Aceptando automáticamente el warp de otro jugador (x{_clock.Rate:0})",
+                $"Automatically following another player's warp (x{_clock.Rate:0})"));
         }
 
         /// <summary>Avisa una vez a quien está impidiendo que otro jugador acelere el tiempo.</summary>
@@ -191,22 +207,30 @@ namespace MultiKerbal.Client.Systems
 
             _limiterNoticeShown = true;
             if (policy.AutoDeny)
-                Post($"Has rechazado automáticamente una petición de warp ({policy.Reason})");
+                Post(Loc.T(
+                    $"Has rechazado automáticamente una petición de warp ({policy.Reason})",
+                    $"You automatically refused a warp request ({policy.Reason})"));
             else if (policy.AcceptUpTo > 1.0)
-                Post($"Otro jugador quiere más warp del que aceptas automáticamente (hasta x{policy.AcceptUpTo:0})");
+                Post(Loc.T(
+                    $"Otro jugador quiere más warp del que aceptas automáticamente (hasta x{policy.AcceptUpTo:0})",
+                    $"Another player wants more warp than you accept automatically (up to x{policy.AcceptUpTo:0})"));
             else
-                Post("Otro jugador quiere acelerar el tiempo: sube el warp para acompañarle");
+                Post(Loc.T(
+                    "Otro jugador quiere acelerar el tiempo: sube el warp para acompañarle",
+                    "Another player wants to warp: raise your warp to follow"));
         }
 
         private string ClampNotice(string limitedBy)
         {
             if (limitedBy == TimeStateMessage.MixedModes)
-                return "Warp limitado: hay jugadores con warp físico y otros con warp sobre raíles";
+                return Loc.T(
+                    "Warp limitado: hay jugadores con warp físico y otros con warp sobre raíles",
+                    "Warp limited: some players are on physics warp and others on rails warp");
             if (string.IsNullOrEmpty(limitedBy) || limitedBy == _localPlayerName())
-                return "Esperando a los demás jugadores para acelerar el tiempo";
+                return Loc.T("Esperando a los demás jugadores para acelerar el tiempo", "Waiting for the other players to warp");
             if (_clock.LimiterAutoDenies)
-                return $"{limitedBy} rechaza automáticamente el warp";
-            return $"Warp limitado por {limitedBy}";
+                return Loc.T($"{limitedBy} rechaza automáticamente el warp", $"{limitedBy} automatically refuses warp");
+            return Loc.T($"Warp limitado por {limitedBy}", $"Warp limited by {limitedBy}");
         }
 
         private void ResetClamp()

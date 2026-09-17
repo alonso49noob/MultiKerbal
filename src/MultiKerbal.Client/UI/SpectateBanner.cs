@@ -7,8 +7,8 @@ namespace MultiKerbal.Client.UI
     /// <summary>Aviso fijo mientras miras una nave ajena o eres su copiloto: recuerda en qué modo estás.</summary>
     internal static class SpectateBanner
     {
-        private const float Width = 460f;
-        private const float Height = 58f;
+        private const float Width = 470f;
+        private const float Height = 62f;
 
         public static void Draw(ClientCore core)
         {
@@ -18,29 +18,33 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
-            var area = new Rect((Screen.width - Width) / 2f, 60f, Width, Height);
-            GUILayout.BeginArea(area, GUI.skin.box);
+            GUILayout.BeginArea(new Rect((Screen.width - Width) / 2f, 60f, Width, Height), GUI.skin.box);
 
             if (spectated != null)
             {
-                string pilot = core.Players.Get(spectated.ControllerId)?.Name ?? "nadie";
-                GUILayout.Label($"Mirando \"{spectated.Name}\" — la pilota {pilot}", UiStyles.Bold);
+                string pilot = core.Players.Get(spectated.ControllerId)?.Name ?? Loc.T("nadie", "nobody");
+                UiStyles.ColoredLabel(
+                    Loc.T($"Mirando \"{spectated.Name}\" — la pilota {pilot}", $"Watching \"{spectated.Name}\" — flown by {pilot}"),
+                    UiStyles.Warning);
             }
 
             if (copiloted != null)
             {
-                bool actions = core.SharedControl.CanAct;
                 GUILayout.Label(
-                    $"Copilotas \"{copiloted.Name}\": tus mandos se suman a los del piloto"
-                    + (actions ? " (también etapas y grupos de acción)" : " (sin etapas ni grupos de acción)"),
+                    core.SharedControl.CanAct
+                        ? Loc.T($"Copilotas \"{copiloted.Name}\": mandos, etapas y grupos de acción",
+                                $"Co-piloting \"{copiloted.Name}\": controls, staging and action groups")
+                        : Loc.T($"Copilotas \"{copiloted.Name}\": solo los mandos de vuelo",
+                                $"Co-piloting \"{copiloted.Name}\": flight controls only"),
                     UiStyles.Label);
             }
 
             GUILayout.BeginHorizontal();
-            if (spectated != null && GUILayout.Button("Dejar de mirar", GUILayout.Width(150f)))
+            if (spectated != null && GUILayout.Button(Loc.T("Dejar de mirar", "Stop watching"), GUILayout.Width(160f)))
                 core.Vessels.StopSpectate();
-            if (copiloted != null && GUILayout.Button("Dejar de copilotar", GUILayout.Width(170f)))
+            if (copiloted != null && GUILayout.Button(Loc.T("Dejar de copilotar", "Stop co-piloting"), GUILayout.Width(180f)))
                 core.SharedControl.SetCopilot(copiloted.Id, 0, false);
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
         }

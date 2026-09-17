@@ -31,7 +31,7 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
-            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Ajustes de warp", GUILayout.Width(Width));
+            _rect = GUILayout.Window(WindowId, _rect, _drawContents, Loc.T("Ajustes de warp", "Warp settings"), GUILayout.Width(Width));
         }
 
         private static bool Toggle(ref bool value, string label, bool indented = false)
@@ -99,43 +99,43 @@ namespace MultiKerbal.Client.UI
             WarpPolicy policy = _core.Settings.Warp;
             bool changed = false;
 
-            GUILayout.Label("Cuando otro jugador quiere acelerar el tiempo:", UiStyles.Bold);
+            GUILayout.Label(Loc.T("Cuando otro jugador quiere acelerar el tiempo:", "When another player wants to warp:"), UiStyles.Bold);
 
-            changed |= Toggle(ref policy.AutoAccept, "Aceptar automáticamente");
+            changed |= Toggle(ref policy.AutoAccept, Loc.T("Aceptar automáticamente", "Accept automatically"));
             if (policy.AutoDeny)
-                Note("Desactivado mientras el rechazo automático esté activado.");
+                Note(Loc.T("Desactivado mientras el rechazo automático esté activado.", "Off while automatic deny is on."));
             GUI.enabled = policy.AutoAccept && !policy.AutoDeny;
-            changed |= Stepper(ref policy.AcceptMaxRate, RateChoices, "Hasta", $"x{policy.AcceptMaxRate:0}");
-            Note("Solo si se cumple todo lo marcado:");
-            changed |= Toggle(ref policy.AcceptOnlyOutsideFlight, "No estoy pilotando (Centro Espacial o estación de seguimiento)", true);
-            changed |= Toggle(ref policy.AcceptOnlyStable, "Mi nave está en órbita, posada o amerizada", true);
-            changed |= Toggle(ref policy.AcceptOnlyEnginesOff, "Los motores están apagados", true);
-            changed |= Toggle(ref policy.AcceptOnlyAlone, "No hay otras naves a menos de 2,5 km", true);
+            changed |= Stepper(ref policy.AcceptMaxRate, RateChoices, Loc.T("Hasta", "Up to"), $"x{policy.AcceptMaxRate:0}");
+            Note(Loc.T("Solo si se cumple todo lo marcado:", "Only if everything ticked is true:"));
+            changed |= Toggle(ref policy.AcceptOnlyOutsideFlight, Loc.T("No estoy pilotando (Centro Espacial o estación de seguimiento)", "I am not flying (Space Center or tracking station)"), true);
+            changed |= Toggle(ref policy.AcceptOnlyStable, Loc.T("Mi nave está en órbita, posada o amerizada", "My vessel is in orbit, landed or splashed down"), true);
+            changed |= Toggle(ref policy.AcceptOnlyEnginesOff, Loc.T("Los motores están apagados", "The engines are off"), true);
+            changed |= Toggle(ref policy.AcceptOnlyAlone, Loc.T("No hay otras naves a menos de 2,5 km", "No other vessels within 2.5 km"), true);
             GUI.enabled = true;
 
             GUILayout.Space(10f);
             GUI.enabled = !policy.AutoDeny;
-            changed |= Toggle(ref policy.AcceptWhenIdle, "Aceptar si estoy ausente (sin tocar teclado ni ratón)");
+            changed |= Toggle(ref policy.AcceptWhenIdle, Loc.T("Aceptar si estoy ausente (sin tocar teclado ni ratón)", "Accept while I am away (no keyboard or mouse)"));
             GUI.enabled = policy.AcceptWhenIdle && !policy.AutoDeny;
-            changed |= Stepper(ref policy.IdleSeconds, IdleChoices, "Tras", WarpPolicyEvaluator.FormatSeconds(policy.IdleSeconds));
-            Note("Sin mirar las condiciones de arriba, hasta el mismo máximo.");
+            changed |= Stepper(ref policy.IdleSeconds, IdleChoices, Loc.T("Tras", "After"), WarpPolicyEvaluator.FormatSeconds(policy.IdleSeconds));
+            Note(Loc.T("Sin mirar las condiciones de arriba, hasta el mismo máximo.", "Ignoring the conditions above, up to the same maximum."));
             GUI.enabled = true;
 
             GUILayout.Space(10f);
-            changed |= Toggle(ref policy.AutoDeny, "Rechazar automáticamente (mientras esté activo no se acepta nada solo)");
+            changed |= Toggle(ref policy.AutoDeny, Loc.T("Rechazar automáticamente (mientras esté activo no se acepta nada solo)", "Refuse automatically (while this is on, nothing is accepted on its own)"));
             GUI.enabled = policy.AutoDeny;
-            Note("Rechaza si se cumple cualquiera de lo marcado; sin nada marcado, siempre:");
-            changed |= Toggle(ref policy.DenyWhileFlying, "Estoy pilotando", true);
-            changed |= Toggle(ref policy.DenyAtSpaceCenter, "Estoy en el Centro Espacial", true);
-            changed |= Toggle(ref policy.DenyInAtmosphere, "Mi nave está en la atmósfera", true);
-            changed |= Toggle(ref policy.DenyNearVessels, "Hay otras naves a menos de 2,5 km", true);
+            Note(Loc.T("Rechaza si se cumple cualquiera de lo marcado; sin nada marcado, siempre:", "Refuses if any ticked item is true; with nothing ticked, always:"));
+            changed |= Toggle(ref policy.DenyWhileFlying, Loc.T("Estoy pilotando", "I am flying"), true);
+            changed |= Toggle(ref policy.DenyAtSpaceCenter, Loc.T("Estoy en el Centro Espacial", "I am at the Space Center"), true);
+            changed |= Toggle(ref policy.DenyInAtmosphere, Loc.T("Mi nave está en la atmósfera", "My vessel is in the atmosphere"), true);
+            changed |= Toggle(ref policy.DenyNearVessels, Loc.T("Hay otras naves a menos de 2,5 km", "There are other vessels within 2.5 km"), true);
             GUI.enabled = true;
 
             GUILayout.Space(10f);
             GUILayout.Label(_core.Warp.PolicyStatus, UiStyles.Label);
-            GUILayout.Label("El warp físico (x2 a x4) nunca se acepta automáticamente.", UiStyles.Muted);
+            GUILayout.Label(Loc.T("El warp físico (x2 a x4) nunca se acepta automáticamente.", "Physics warp (x2 to x4) is never accepted automatically."), UiStyles.Muted);
 
-            if (GUILayout.Button("Cerrar"))
+            if (GUILayout.Button(Loc.T("Cerrar", "Close")))
                 Visible = false;
 
             if (changed)

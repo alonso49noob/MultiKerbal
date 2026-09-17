@@ -41,12 +41,13 @@ namespace MultiKerbal.Client
         public ClientCore()
         {
             Settings = ClientSettings.Load();
+            Loc.Initialize(Settings.Language);
             TimeSync = new TimeSyncSystem(Clock);
             Warp = new WarpSystem(Clock, message => Send(message), () => LocalPlayerName, () => Settings.Warp);
             Vessels = new VesselSyncSystem(
                 () => Players.LocalPlayerId,
                 () => LocalPlayerName,
-                id => Players.Get(id)?.Name ?? "otro jugador",
+                id => Players.Get(id)?.Name ?? Loc.T("otro jugador", "another player"),
                 () => Settings.DefaultAccess,
                 (message, delivery) => Send(message, delivery));
             SharedControl = new SharedControlSystem(
@@ -125,7 +126,7 @@ namespace MultiKerbal.Client
             ResetSession();
             Chat.Clear();
             State = SessionState.Connecting;
-            StatusText = $"Conectando a {host}:{port}...";
+            StatusText = Loc.T($"Conectando a {host}:{port}...", $"Connecting to {host}:{port}...");
             ClientLog.Info(StatusText);
             _net.Connect(host, port);
         }
@@ -178,7 +179,7 @@ namespace MultiKerbal.Client
             }
             else if (_enteredGame && HighLogic.LoadedScene == GameScenes.MAINMENU)
             {
-                Disconnect("Salió al menú principal");
+                Disconnect(Loc.T("Salió al menú principal", "Left to the main menu"));
                 return;
             }
 
@@ -279,7 +280,7 @@ namespace MultiKerbal.Client
                 return;
 
             State = SessionState.Handshaking;
-            StatusText = "Conectado. Identificándose...";
+            StatusText = Loc.T("Conectado. Identificándose...", "Connected. Signing in...");
             _net.Send(new HandshakeRequestMessage
             {
                 ProtocolVersion = ProtocolInfo.Version,
@@ -344,7 +345,7 @@ namespace MultiKerbal.Client
             State = SessionState.Joined;
             Players.LocalPlayerId = response.PlayerId;
             ServerName = response.ServerName ?? string.Empty;
-            StatusText = $"Conectado a {ServerName}";
+            StatusText = Loc.T($"Conectado a {ServerName}", $"Connected to {ServerName}");
             _nextPing = 0;
             _startGamePending = true;
             _net.StartUdp(response.UdpToken);
@@ -363,8 +364,8 @@ namespace MultiKerbal.Client
         {
             ModDifferences = ModCompare.Compare(response.Mods, ModScanner.Installed);
             ModSummary = ModDifferences.Count == 0
-                ? "El servidor todavía no tiene lista de mods."
-                : "Respecto al servidor: " + ModCompare.Summarize(ModDifferences);
+                ? Loc.T("El servidor todavía no tiene lista de mods.", "The server has no mod list yet.")
+                : Loc.T("Respecto al servidor: ", "Compared with the server: ") + ModCompare.Summarize(ModDifferences);
 
             bool problems = ModDifferences.Exists(d => d.IsProblem);
             WaitingForModCheck = problems && response.Accepted;
@@ -405,10 +406,10 @@ namespace MultiKerbal.Client
 
             bool leaveGame = _enteredGame || (State == SessionState.Joined && ClientScenes.IsGameplay);
             State = SessionState.Disconnected;
-            StatusText = string.IsNullOrEmpty(reason) ? "Desconectado" : reason;
+            StatusText = string.IsNullOrEmpty(reason) ? Loc.T("Desconectado", "Disconnected") : reason;
             ClientLog.Info($"Desconectado: {StatusText}");
 
-            Chat.Add("MultiKerbal", $"Desconectado: {StatusText}", SystemColor, true);
+            Chat.Add("MultiKerbal", Loc.T($"Desconectado: {StatusText}", $"Disconnected: {StatusText}"), SystemColor, true);
             ResetSession();
             _toolbar.SetAvailable(false);
             MultiplayerWindow.Visible = false;

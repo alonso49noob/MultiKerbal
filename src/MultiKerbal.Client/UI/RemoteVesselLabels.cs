@@ -57,12 +57,12 @@ namespace MultiKerbal.Client.UI
                 _style.normal.textColor = core.Players.ColorOfOwner(tracked.OwnerName);
                 string text = VesselPermissions.HasOwner(tracked.OwnerName)
                     ? $"{tracked.Name} · {tracked.OwnerName}"
-                    : $"{tracked.Name} (sin dueño)";
+                    : Loc.T($"{tracked.Name} (sin dueño)", $"{tracked.Name} (no owner)");
 
                 // Si la pilota alguien que no es su dueño, también se indica.
                 PlayerInfo pilot = core.Players.Get(tracked.ControllerId);
                 if (pilot != null && !VesselPermissions.IsOwner(tracked.OwnerName, pilot.Name))
-                    text += $" — la pilota {pilot.Name}";
+                    text += Loc.T($" — la pilota {pilot.Name}", $" — flown by {pilot.Name}");
 
                 var rect = new Rect(screen.x - (LabelWidth / 2f), Screen.height - screen.y - LabelHeight - 6f, LabelWidth, LabelHeight);
                 GUI.Label(rect, text, _style);

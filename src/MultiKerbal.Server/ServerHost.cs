@@ -92,22 +92,28 @@ public sealed partial class ServerHost
     internal static string? ValidateHandshake(HandshakeRequestMessage request, ServerConfig config, IEnumerable<string> connectedNames)
     {
         if (request.ProtocolVersion != ProtocolInfo.Version)
-            return $"Versión de protocolo incompatible (servidor {ProtocolInfo.Version}, cliente {request.ProtocolVersion}). Usa la misma versión de MultiKerbal.";
+            return Lang.T(
+                $"Versión de protocolo incompatible (servidor {ProtocolInfo.Version}, cliente {request.ProtocolVersion}). Usa la misma versión de MultiKerbal.",
+                $"Incompatible protocol version (server {ProtocolInfo.Version}, client {request.ProtocolVersion}). Use the same MultiKerbal version.");
 
         string name = request.PlayerName?.Trim() ?? string.Empty;
         if (name.Length < ProtocolInfo.MinPlayerNameLength || name.Length > ProtocolInfo.MaxPlayerNameLength)
-            return $"El nombre debe tener entre {ProtocolInfo.MinPlayerNameLength} y {ProtocolInfo.MaxPlayerNameLength} caracteres";
+            return Lang.T(
+                $"El nombre debe tener entre {ProtocolInfo.MinPlayerNameLength} y {ProtocolInfo.MaxPlayerNameLength} caracteres",
+                $"The name must be between {ProtocolInfo.MinPlayerNameLength} and {ProtocolInfo.MaxPlayerNameLength} characters");
         if (!PlayerNameRegex().IsMatch(name))
-            return "El nombre solo puede contener letras, números, espacios y los signos _ - .";
+            return Lang.T(
+                "El nombre solo puede contener letras, números, espacios y los signos _ - .",
+                "The name can only contain letters, numbers, spaces and _ - .");
 
         if (!string.IsNullOrEmpty(config.Password) && request.Password != config.Password)
-            return "Contraseña incorrecta";
+            return Lang.T("Contraseña incorrecta", "Wrong password");
 
         List<string> names = connectedNames.ToList();
         if (names.Count >= config.MaxPlayers)
-            return $"El servidor está lleno ({config.MaxPlayers} jugadores)";
+            return Lang.T($"El servidor está lleno ({config.MaxPlayers} jugadores)", $"The server is full ({config.MaxPlayers} players)");
         if (names.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
-            return $"Ya hay un jugador conectado con el nombre \"{name}\"";
+            return Lang.T($"Ya hay un jugador conectado con el nombre \"{name}\"", $"A player named \"{name}\" is already connected");
 
         return null;
     }
@@ -225,7 +231,7 @@ public sealed partial class ServerHost
         Log.Info($"{player.Name} se ha desconectado: {reason}");
         ReleaseVesselsOf(player);
         BroadcastReliable(new PlayerLeftMessage { PlayerId = player.Info.Id });
-        SendSystemChat($"{player.Name} ha salido de la partida");
+        SendSystemChat(Lang.T($"{player.Name} ha salido de la partida", $"{player.Name} left the game"));
         RecomputeWarp(now);
 
         if (!AuthenticatedPlayers().Any() && Config.PauseClockWhenEmpty)
@@ -354,7 +360,7 @@ public sealed partial class ServerHost
         _network.Send(player.Connection, _time.BuildState(now));
         SendVesselsTo(player);
         BroadcastReliable(new PlayerJoinedMessage { Player = player.Info }, except: player);
-        SendSystemChat($"{player.Name} se ha unido a la partida");
+        SendSystemChat(Lang.T($"{player.Name} se ha unido a la partida", $"{player.Name} joined the game"));
 
         Log.Info($"{player.Name} (jugador {playerId}) se ha unido desde {player.Connection.RemoteEndPoint} — MultiKerbal {request.ModVersion}, KSP {request.GameVersion}");
         AnnounceMods(player, modDifferences);
@@ -382,7 +388,9 @@ public sealed partial class ServerHost
 
         List<ModDifference> differences = ModCompare.Compare(_mods.Mods, request.Mods);
         if (Config.ModPolicy == "strict" && differences.Any(d => d.IsProblem))
-            rejection = $"Tus mods no coinciden con los del servidor: {ModCompare.Summarize(differences)}";
+            rejection = Lang.T(
+                $"Tus mods no coinciden con los del servidor: {ModCompare.Summarize(differences)}",
+                $"Your mods do not match the server's: {ModCompare.Summarize(differences)}");
 
         return differences;
     }
@@ -394,7 +402,9 @@ public sealed partial class ServerHost
 
         string summary = ModCompare.Summarize(differences);
         Log.Warn($"Mods de {player.Name}: {summary}");
-        SendSystemChat($"Los mods de {player.Name} no coinciden con los del servidor: {summary}");
+        SendSystemChat(Lang.T(
+            $"Los mods de {player.Name} no coinciden con los del servidor: {summary}",
+            $"{player.Name}'s mods do not match the server's: {summary}"));
     }
 
     private void OnChat(Player player, ChatMessage chat)

@@ -49,11 +49,11 @@ namespace MultiKerbal.Common.Vessels
             switch (access)
             {
                 case VesselAccess.Private:
-                    return "privada";
+                    return Lang.T("privada", "private");
                 case VesselAccess.Public:
-                    return "pública";
+                    return Lang.T("pública", "public");
                 default:
-                    return "compartida";
+                    return Lang.T("compartida", "shared");
             }
         }
     }

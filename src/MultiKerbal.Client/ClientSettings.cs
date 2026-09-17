@@ -14,6 +14,9 @@ namespace MultiKerbal.Client
         public string Host = "127.0.0.1";
         public int Port = ProtocolInfo.DefaultPort;
 
+        /// <summary>Idioma del mod: "auto" (el de KSP), "es" o "en".</summary>
+        public string Language = "auto";
+
         /// <summary>Acceso con el que se publican las naves nuevas (se puede cambiar después en cada nave).</summary>
         public VesselAccess DefaultAccess = VesselAccess.Shared;
 
@@ -49,6 +52,10 @@ namespace MultiKerbal.Client
                 if (Enum.TryParse(node.GetValue("defaultAccess"), out VesselAccess access) && VesselPermissions.IsValid(access))
                     settings.DefaultAccess = access;
 
+                string language = node.GetValue("language");
+                if (language is "auto" or "es" or "en")
+                    settings.Language = language;
+
                 ConfigNode warp = node.GetNode("WARP_POLICY");
                 if (warp != null)
                     LoadWarp(warp, settings.Warp);
@@ -76,6 +83,7 @@ namespace MultiKerbal.Client
                 node.AddValue("host", Host);
                 node.AddValue("port", Port.ToString());
                 node.AddValue("defaultAccess", DefaultAccess.ToString());
+                node.AddValue("language", Language);
                 SaveWarp(node.AddNode("WARP_POLICY"), Warp);
                 SaveLabels(node.AddNode("LABELS"), Labels);
                 root.Save(FilePath);

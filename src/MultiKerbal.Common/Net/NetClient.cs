@@ -253,7 +253,7 @@ namespace MultiKerbal.Common.Net
                     new Thread(SendLoop) { IsBackground = true, Name = "MultiKerbal Send" }.Start();
 
                     ReceiveLoop();
-                    Close("El servidor cerró la conexión", raiseEvent: true);
+                    Close(Lang.T("El servidor cerró la conexión", "The server closed the connection"), raiseEvent: true);
                 }
                 catch (Exception ex)
                 {
@@ -401,16 +401,16 @@ namespace MultiKerbal.Common.Net
                 switch (ex)
                 {
                     case SocketException socket when socket.SocketErrorCode == SocketError.ConnectionRefused:
-                        return "Conexión rechazada: ¿está el servidor en marcha?";
+                        return Lang.T("Conexión rechazada: ¿está el servidor en marcha?", "Connection refused: is the server running?");
                     case SocketException socket when socket.SocketErrorCode == SocketError.HostNotFound:
-                        return "No se encontró el servidor";
+                        return Lang.T("No se encontró el servidor", "Server not found");
                     case SocketException socket:
-                        return $"Error de red: {socket.SocketErrorCode}";
+                        return Lang.T($"Error de red: {socket.SocketErrorCode}", $"Network error: {socket.SocketErrorCode}");
                     case ProtocolException _:
                         return $"Error de protocolo: {ex.Message}";
                     case IOException _:
                     case ObjectDisposedException _:
-                        return "Conexión perdida";
+                        return Lang.T("Conexión perdida", "Connection lost");
                     default:
                         return ex.Message;
                 }

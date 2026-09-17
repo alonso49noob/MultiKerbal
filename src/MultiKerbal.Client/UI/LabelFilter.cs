@@ -18,11 +18,15 @@ namespace MultiKerbal.Client.UI
 
     internal sealed class LabelCategoryInfo
     {
-        public LabelCategoryInfo(LabelCategory category, string key, string text, bool shownByDefault = true)
+        private readonly string _spanish;
+        private readonly string _english;
+
+        public LabelCategoryInfo(LabelCategory category, string key, string spanish, string english, bool shownByDefault = true)
         {
             Category = category;
             Key = key;
-            Text = text;
+            _spanish = spanish;
+            _english = english;
             ShownByDefault = shownByDefault;
         }
 
@@ -31,7 +35,8 @@ namespace MultiKerbal.Client.UI
         /// <summary>Nombre en settings.cfg.</summary>
         public string Key { get; }
 
-        public string Text { get; }
+        /// <summary>Se traduce al leerlo: esta lista se crea antes de saber el idioma.</summary>
+        public string Text => Loc.T(_spanish, _english);
 
         public bool ShownByDefault { get; }
     }
@@ -42,18 +47,18 @@ namespace MultiKerbal.Client.UI
         /// <summary>En el orden (y el índice) de <see cref="LabelCategory"/>.</summary>
         public static readonly LabelCategoryInfo[] Categories =
         {
-            new LabelCategoryInfo(LabelCategory.Ship, "ships", "Naves"),
-            new LabelCategoryInfo(LabelCategory.Probe, "probes", "Sondas y satélites"),
-            new LabelCategoryInfo(LabelCategory.Relay, "relays", "Relés"),
-            new LabelCategoryInfo(LabelCategory.Station, "stations", "Estaciones"),
-            new LabelCategoryInfo(LabelCategory.Base, "bases", "Bases"),
-            new LabelCategoryInfo(LabelCategory.Lander, "landers", "Módulos de aterrizaje"),
-            new LabelCategoryInfo(LabelCategory.Rover, "rovers", "Rovers"),
-            new LabelCategoryInfo(LabelCategory.Plane, "planes", "Aviones"),
-            new LabelCategoryInfo(LabelCategory.Eva, "eva", "Kerbals en EVA"),
-            new LabelCategoryInfo(LabelCategory.Flag, "flags", "Banderas"),
-            new LabelCategoryInfo(LabelCategory.Science, "science", "Experimentos desplegados"),
-            new LabelCategoryInfo(LabelCategory.Debris, "debris", "Escombros", false),
+            new LabelCategoryInfo(LabelCategory.Ship, "ships", "Naves", "Ships"),
+            new LabelCategoryInfo(LabelCategory.Probe, "probes", "Sondas y satélites", "Probes and satellites"),
+            new LabelCategoryInfo(LabelCategory.Relay, "relays", "Relés", "Relays"),
+            new LabelCategoryInfo(LabelCategory.Station, "stations", "Estaciones", "Stations"),
+            new LabelCategoryInfo(LabelCategory.Base, "bases", "Bases", "Bases"),
+            new LabelCategoryInfo(LabelCategory.Lander, "landers", "Módulos de aterrizaje", "Landers"),
+            new LabelCategoryInfo(LabelCategory.Rover, "rovers", "Rovers", "Rovers"),
+            new LabelCategoryInfo(LabelCategory.Plane, "planes", "Aviones", "Planes"),
+            new LabelCategoryInfo(LabelCategory.Eva, "eva", "Kerbals en EVA", "Kerbals on EVA"),
+            new LabelCategoryInfo(LabelCategory.Flag, "flags", "Banderas", "Flags"),
+            new LabelCategoryInfo(LabelCategory.Science, "science", "Experimentos desplegados", "Deployed science"),
+            new LabelCategoryInfo(LabelCategory.Debris, "debris", "Escombros", "Debris", false),
         };
 
         private readonly bool[] _shown = new bool[Categories.Length];

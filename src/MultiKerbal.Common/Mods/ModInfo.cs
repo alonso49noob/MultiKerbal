@@ -106,13 +106,15 @@ namespace MultiKerbal.Common.Mods
 
             var parts = new List<string>();
             if (missing.Count > 0)
-                parts.Add($"faltan {Join(missing)}");
+                parts.Add(Lang.T($"faltan {Join(missing)}", $"missing {Join(missing)}"));
             if (other.Count > 0)
-                parts.Add($"con otra versión {Join(other)}");
+                parts.Add(Lang.T($"con otra versión {Join(other)}", $"different version of {Join(other)}"));
             if (extra.Count > 0)
-                parts.Add($"sobran {Join(extra)}");
+                parts.Add(Lang.T($"sobran {Join(extra)}", $"extra {Join(extra)}"));
 
-            return parts.Count == 0 ? "los mismos mods que el servidor" : string.Join("; ", parts.ToArray());
+            return parts.Count == 0
+                ? Lang.T("los mismos mods que el servidor", "the same mods as the server")
+                : string.Join("; ", parts.ToArray());
         }
 
         /// <summary>Sin versión en uno de los dos lados (un mod sin DLL) no se compara la versión.</summary>
@@ -136,7 +138,7 @@ namespace MultiKerbal.Common.Mods
         private static string Join(List<string> names) =>
             names.Count <= 3
                 ? string.Join(", ", names.ToArray())
-                : string.Join(", ", names.GetRange(0, 3).ToArray()) + $" y {names.Count - 3} más";
+                : string.Join(", ", names.GetRange(0, 3).ToArray()) + Lang.T($" y {names.Count - 3} más", $" and {names.Count - 3} more");
 
         /// <summary>Primero los problemas (faltan, otra versión, sobran) y dentro de cada grupo por nombre.</summary>
         private static int CompareForDisplay(ModDifference a, ModDifference b)

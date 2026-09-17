@@ -109,7 +109,9 @@ namespace MultiKerbal.Client.Vessels
             Vessel vessel = LiveVessel(tracked);
             if (HighLogic.LoadedScene != GameScenes.FLIGHT || vessel == null || !vessel.loaded)
             {
-                error = "Solo puedes mirarla si estás volando a menos de 2,5 km de ella";
+                error = Loc.T(
+                    "Solo puedes mirarla si estás volando a menos de 2,5 km de ella",
+                    "You can only watch it while flying within 2.5 km of it");
                 return false;
             }
 
@@ -122,7 +124,7 @@ namespace MultiKerbal.Client.Vessels
                 return true;
             }
 
-            error = "KSP no ha dejado cambiar la cámara a esa nave";
+            error = Loc.T("KSP no ha dejado cambiar la cámara a esa nave", "KSP would not move the camera to that vessel");
             return false;
         }
 
@@ -148,7 +150,8 @@ namespace MultiKerbal.Client.Vessels
         {
             _send(new VesselHandoverRequestMessage { VesselId = tracked.Id }, Delivery.Reliable);
             ScreenMessages.PostScreenMessage(
-                $"Pedido el control de \"{tracked.Name}\" a {_playerName(tracked.ControllerId)}".Replace("<", "‹"),
+                Loc.T($"Pedido el control de \"{tracked.Name}\" a {_playerName(tracked.ControllerId)}",
+                      $"Asked {_playerName(tracked.ControllerId)} to hand over \"{tracked.Name}\"").Replace("<", "‹"),
                 NoticeSeconds,
                 ScreenMessageStyle.UPPER_CENTER);
         }
@@ -701,7 +704,10 @@ namespace MultiKerbal.Client.Vessels
             bool blocked = blockFly || blockRemove;
             if (blocked && selectedId != _guardedVessel)
             {
-                string reason = blockFly ? DescribeCannotPilot(tracked) : $"Solo {tracked.OwnerName} puede recuperar o borrar \"{tracked.Name}\"";
+                string reason = blockFly
+                    ? DescribeCannotPilot(tracked)
+                    : Loc.T($"Solo {tracked.OwnerName} puede recuperar o borrar \"{tracked.Name}\"",
+                            $"Only {tracked.OwnerName} can recover or delete \"{tracked.Name}\"");
                 ScreenMessages.PostScreenMessage(reason.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
             }
             else if (!blocked && _guardBlockedButtons && selectedId == _guardedVessel && selected != null)
@@ -717,10 +723,13 @@ namespace MultiKerbal.Client.Vessels
         private string DescribeCannotPilot(TrackedVessel tracked)
         {
             if (IsPilotedByOther(tracked))
-                return $"\"{tracked.Name}\" la está pilotando {_playerName(tracked.ControllerId)}";
+                return Loc.T($"\"{tracked.Name}\" la está pilotando {_playerName(tracked.ControllerId)}",
+                             $"{_playerName(tracked.ControllerId)} is flying \"{tracked.Name}\"");
             if (!VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, _localPlayerName()))
-                return $"\"{tracked.Name}\" es privada: solo {tracked.OwnerName} puede pilotarla";
-            return $"No se pudo tomar el control de \"{tracked.Name}\"";
+                return Loc.T($"\"{tracked.Name}\" es privada: solo {tracked.OwnerName} puede pilotarla",
+                             $"\"{tracked.Name}\" is private: only {tracked.OwnerName} can fly it");
+            return Loc.T($"No se pudo tomar el control de \"{tracked.Name}\"",
+                         $"Could not take control of \"{tracked.Name}\"");
         }
 
         private void SpawnRemoteVessels(double now)
@@ -765,8 +774,11 @@ namespace MultiKerbal.Client.Vessels
                 if (vessel == null)
                 {
                     tracked.FailedVersion = tracked.ProtoVersion;
-                    string owner = VesselPermissions.HasOwner(tracked.OwnerName) ? $" de {tracked.OwnerName}" : string.Empty;
-                    string notice = $"No se pudo cargar la nave \"{tracked.Name}\"{owner}: {error}";
+                    string owner = VesselPermissions.HasOwner(tracked.OwnerName)
+                        ? Loc.T($" de {tracked.OwnerName}", $" from {tracked.OwnerName}")
+                        : string.Empty;
+                    string notice = Loc.T($"No se pudo cargar la nave \"{tracked.Name}\"{owner}: {error}",
+                                          $"Could not load the vessel \"{tracked.Name}\"{owner}: {error}");
                     ClientLog.Warn(notice);
                     ScreenMessages.PostScreenMessage(notice.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
                     continue;
@@ -907,7 +919,10 @@ namespace MultiKerbal.Client.Vessels
             Vessel merged = action.to != null ? action.to.vessel : null;
             string name = merged != null ? merged.vesselName : "la nave";
             ClientLog.Info($"Acoplamiento completado: {name}");
-            ScreenMessages.PostScreenMessage($"Acoplado: ahora {name} es una sola nave".Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
+            ScreenMessages.PostScreenMessage(
+                Loc.T($"Acoplado: ahora {name} es una sola nave", $"Docked: {name} is now a single vessel").Replace("<", "‹"),
+                NoticeSeconds,
+                ScreenMessageStyle.UPPER_CENTER);
         }
 
         /// <summary>Al desacoplar aparece una nave nueva: se publica enseguida para que no tarde en salir en los demás.</summary>
@@ -931,7 +946,10 @@ namespace MultiKerbal.Client.Vessels
             // Sin permiso (la pilota otro o no es nuestra): el servidor la mantiene, así que vuelve a aparecer.
             tracked.Vessel = null;
             tracked.SpawnedVersion = -1;
-            ScreenMessages.PostScreenMessage($"\"{tracked.Name}\" no es tuya: volverá a aparecer".Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
+            ScreenMessages.PostScreenMessage(
+                Loc.T($"\"{tracked.Name}\" no es tuya: volverá a aparecer", $"\"{tracked.Name}\" is not yours: it will come back").Replace("<", "‹"),
+                NoticeSeconds,
+                ScreenMessageStyle.UPPER_CENTER);
         }
 
         private void ForgetAndPublishRemoval(TrackedVessel tracked)

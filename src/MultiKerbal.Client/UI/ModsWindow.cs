@@ -13,10 +13,6 @@ namespace MultiKerbal.Client.UI
         private const int WindowId = 0x4D4B0006;
         private const float Width = 520f;
 
-        private static readonly Color Good = new Color(0.45f, 0.9f, 0.45f);
-        private static readonly Color Warning = new Color(1f, 0.82f, 0.35f);
-        private static readonly Color Bad = new Color(1f, 0.45f, 0.45f);
-
         private readonly ClientCore _core;
         private readonly GUI.WindowFunction _drawContents;
         private Rect _rect = new Rect(80f, 80f, Width, 0f);
@@ -37,7 +33,7 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
-            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Mods del servidor", GUILayout.Width(Width));
+            _rect = GUILayout.Window(WindowId, _rect, _drawContents, Loc.T("Mods del servidor", "Server mods"), GUILayout.Width(Width));
         }
 
         private void DrawContents(int id)
@@ -49,36 +45,43 @@ namespace MultiKerbal.Client.UI
             {
                 GUILayout.Label(
                     _core.State == SessionState.Disconnected
-                        ? "Conéctate a un servidor para comparar sus mods con los tuyos."
-                        : "El servidor aún no tiene lista de mods: la fija el primer jugador que entra.",
+                        ? Loc.T("Conéctate a un servidor para comparar sus mods con los tuyos.",
+                                "Connect to a server to compare its mods with yours.")
+                        : Loc.T("El servidor aún no tiene lista de mods: la fija el primer jugador que entra.",
+                                "The server has no mod list yet: the first player to join sets it."),
                     UiStyles.Label);
             }
             else
             {
                 GUILayout.Label(_core.ModSummary, UiStyles.Label);
-                _onlyProblems = GUILayout.Toggle(_onlyProblems, "Ver solo los que no coinciden");
+                _onlyProblems = GUILayout.Toggle(_onlyProblems, Loc.T("Ver solo los que no coinciden", "Show only what does not match"));
                 DrawList(differences);
             }
 
             GUILayout.BeginHorizontal();
-            if (waiting && GUILayout.Button("Entrar igualmente"))
+            if (waiting && GUILayout.Button(Loc.T("Entrar igualmente", "Join anyway")))
             {
                 _core.AcceptMods();
                 Visible = false;
             }
 
-            if (waiting && GUILayout.Button("Desconectar"))
+            if (waiting && GUILayout.Button(Loc.T("Desconectar", "Disconnect")))
             {
-                _core.Disconnect("Desconectado por diferencias de mods");
+                _core.Disconnect(Loc.T("Desconectado por diferencias de mods", "Disconnected over mod differences"));
                 Visible = false;
             }
 
-            if (GUILayout.Button("Cerrar", GUILayout.Width(100f)))
+            if (GUILayout.Button(Loc.T("Cerrar", "Close"), GUILayout.Width(100f)))
                 Visible = false;
             GUILayout.EndHorizontal();
 
             if (waiting)
-                GUILayout.Label("La partida no empieza hasta que decidas. Las naves con piezas que te falten no se cargarán.", UiStyles.Muted);
+            {
+                GUILayout.Label(
+                    Loc.T("La partida no empieza hasta que decidas. Las naves con piezas que te falten no se cargarán.",
+                          "The game will not start until you decide. Vessels using parts you lack will not load."),
+                    UiStyles.Muted);
+            }
 
             GUI.DragWindow();
         }
@@ -103,7 +106,12 @@ namespace MultiKerbal.Client.UI
             }
 
             if (hidden > 0)
-                GUILayout.Label($"… y {hidden} que ya tienes igual que el servidor", UiStyles.Muted);
+            {
+                GUILayout.Label(
+                    Loc.T($"… y {hidden} que ya tienes igual que el servidor", $"… and {hidden} you already have, same as the server"),
+                    UiStyles.Muted);
+            }
+
             GUILayout.EndScrollView();
         }
 
@@ -127,11 +135,11 @@ namespace MultiKerbal.Client.UI
             switch (status)
             {
                 case ModStatus.Ok:
-                    return Good;
+                    return UiStyles.Good;
                 case ModStatus.Missing:
-                    return Bad;
+                    return UiStyles.Bad;
                 case ModStatus.OtherVersion:
-                    return Warning;
+                    return UiStyles.Warning;
                 default:
                     return Color.gray;
             }
@@ -143,16 +151,18 @@ namespace MultiKerbal.Client.UI
             {
                 case ModStatus.Missing:
                     return difference.ServerVersion.Length > 0
-                        ? $"te falta (servidor: {difference.ServerVersion})"
-                        : "te falta";
+                        ? Loc.T($"te falta (servidor: {difference.ServerVersion})", $"missing (server: {difference.ServerVersion})")
+                        : Loc.T("te falta", "missing");
                 case ModStatus.OtherVersion:
-                    return $"otra versión — servidor: {difference.ServerVersion}, tú: {difference.PlayerVersion}";
+                    return Loc.T(
+                        $"otra versión — servidor: {difference.ServerVersion}, tú: {difference.PlayerVersion}",
+                        $"different version — server: {difference.ServerVersion}, you: {difference.PlayerVersion}");
                 case ModStatus.Extra:
                     return difference.PlayerVersion.Length > 0
-                        ? $"solo lo tienes tú ({difference.PlayerVersion})"
-                        : "solo lo tienes tú";
+                        ? Loc.T($"solo lo tienes tú ({difference.PlayerVersion})", $"only you have it ({difference.PlayerVersion})")
+                        : Loc.T("solo lo tienes tú", "only you have it");
                 default:
-                    return difference.PlayerVersion.Length > 0 ? difference.PlayerVersion : "instalado";
+                    return difference.PlayerVersion.Length > 0 ? difference.PlayerVersion : Loc.T("instalado", "installed");
             }
         }
     }

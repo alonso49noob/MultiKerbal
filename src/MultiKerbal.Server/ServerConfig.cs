@@ -34,6 +34,9 @@ public sealed class ServerConfig
     /// </summary>
     public string ModPolicy { get; set; } = "warn";
 
+    /// <summary>Idioma de los mensajes que ve el jugador (chat y motivos de rechazo): "es" o "en".</summary>
+    public string Language { get; set; } = "es";
+
     public string DataDirectory { get; set; } = "Universe";
 
     public static ServerConfig LoadOrCreate(string path)
@@ -57,6 +60,8 @@ public sealed class ServerConfig
             throw new InvalidDataException($"Puerto inválido: {Port}");
 
         MaxPlayers = Math.Clamp(MaxPlayers, 1, ProtocolInfo.MaxPlayers);
+        Language = (Language ?? "es").Trim().ToLowerInvariant() == "en" ? "en" : "es";
+        Lang.English = Language == "en";
         ModPolicy = (ModPolicy ?? "warn").Trim().ToLowerInvariant();
         if (ModPolicy is not ("off" or "warn" or "strict"))
         {

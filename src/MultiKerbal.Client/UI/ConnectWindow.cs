@@ -49,46 +49,6 @@ namespace MultiKerbal.Client.UI
             _rect = GUILayout.Window(WindowId, _rect, _drawContents, "MultiKerbal " + ClientCore.ModVersion, GUILayout.Width(Width));
         }
 
-        private void DrawContents(int id)
-        {
-            bool idle = _core.State == SessionState.Disconnected;
-
-            GUI.enabled = idle;
-            _name = Field("Nombre", _name, ProtocolInfo.MaxPlayerNameLength);
-            _host = Field("Servidor", _host, 128);
-            _port = Field("Puerto", _port, 5);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Contraseña", UiStyles.Label, GUILayout.Width(LabelWidth));
-            _password = GUILayout.PasswordField(_password, '*', 64);
-            GUILayout.EndHorizontal();
-            GUI.enabled = true;
-
-            if (!string.IsNullOrEmpty(_core.StatusText))
-                GUILayout.Label(_core.StatusText, UiStyles.Label);
-
-            GUILayout.BeginHorizontal();
-            if (idle)
-            {
-                if (GUILayout.Button("Conectar y jugar"))
-                    TryConnect();
-            }
-            else if (GUILayout.Button("Cancelar"))
-            {
-                _core.Disconnect("Conexión cancelada");
-            }
-
-            if (GUILayout.Button("Mods", GUILayout.Width(70f)))
-                _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
-            if (GUILayout.Button("Ocultar", GUILayout.Width(LabelWidth)))
-                Visible = false;
-            GUILayout.EndHorizontal();
-
-            if (_core.ModDifferences.Count > 0)
-                GUILayout.Label(_core.ModSummary, UiStyles.Muted);
-
-            GUI.DragWindow();
-        }
-
         private static string Field(string label, string value, int maxLength)
         {
             GUILayout.BeginHorizontal();
@@ -98,25 +58,91 @@ namespace MultiKerbal.Client.UI
             return value;
         }
 
+        private void DrawContents(int id)
+        {
+            bool idle = _core.State == SessionState.Disconnected;
+
+            GUI.enabled = idle;
+            _name = Field(Loc.T("Nombre", "Name"), _name, ProtocolInfo.MaxPlayerNameLength);
+            _host = Field(Loc.T("Servidor", "Server"), _host, 128);
+            _port = Field(Loc.T("Puerto", "Port"), _port, 5);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(Loc.T("Contraseña", "Password"), UiStyles.Label, GUILayout.Width(LabelWidth));
+            _password = GUILayout.PasswordField(_password, '*', 64);
+            GUILayout.EndHorizontal();
+            GUI.enabled = true;
+
+            DrawLanguage();
+
+            if (!string.IsNullOrEmpty(_core.StatusText))
+                GUILayout.Label(_core.StatusText, UiStyles.Label);
+
+            GUILayout.BeginHorizontal();
+            if (idle)
+            {
+                if (GUILayout.Button(Loc.T("Conectar y jugar", "Connect and play")))
+                    TryConnect();
+            }
+            else if (GUILayout.Button(Loc.T("Cancelar", "Cancel")))
+            {
+                _core.Disconnect(Loc.T("Conexión cancelada", "Connection cancelled"));
+            }
+
+            if (GUILayout.Button("Mods", GUILayout.Width(70f)))
+                _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
+            if (GUILayout.Button(Loc.T("Ocultar", "Hide"), GUILayout.Width(LabelWidth)))
+                Visible = false;
+            GUILayout.EndHorizontal();
+
+            if (_core.ModDifferences.Count > 0)
+                GUILayout.Label(_core.ModSummary, UiStyles.Muted);
+
+            GUI.DragWindow();
+        }
+
+        /// <summary>Idioma del mod, aparte del de KSP: útil si juegas con gente que no habla tu idioma.</summary>
+        private void DrawLanguage()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(Loc.T("Idioma", "Language"), UiStyles.Label, GUILayout.Width(LabelWidth));
+            LanguageButton("auto", Loc.T("El de KSP", "KSP's"));
+            LanguageButton("es", "Español");
+            LanguageButton("en", "English");
+            GUILayout.EndHorizontal();
+        }
+
+        private void LanguageButton(string language, string text)
+        {
+            bool selected = _core.Settings.Language == language;
+            if (GUILayout.Toggle(selected, text, GUI.skin.button) == selected)
+                return;
+
+            _core.Settings.Language = language;
+            _core.Settings.Save();
+            Loc.Initialize(language);
+        }
+
         private void TryConnect()
         {
             string name = _name.Trim();
             string host = _host.Trim();
             if (name.Length < ProtocolInfo.MinPlayerNameLength)
             {
-                _core.SetStatus($"El nombre debe tener al menos {ProtocolInfo.MinPlayerNameLength} caracteres");
+                _core.SetStatus(Loc.T(
+                    $"El nombre debe tener al menos {ProtocolInfo.MinPlayerNameLength} caracteres",
+                    $"The name needs at least {ProtocolInfo.MinPlayerNameLength} characters"));
                 return;
             }
 
             if (host.Length == 0)
             {
-                _core.SetStatus("Indica la dirección del servidor");
+                _core.SetStatus(Loc.T("Indica la dirección del servidor", "Enter the server address"));
                 return;
             }
 
             if (!int.TryParse(_port.Trim(), out int port) || port < 1 || port > 65535)
             {
-                _core.SetStatus("Puerto inválido");
+                _core.SetStatus(Loc.T("Puerto inválido", "Invalid port"));
                 return;
             }
 

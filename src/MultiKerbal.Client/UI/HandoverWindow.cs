@@ -27,8 +27,8 @@ namespace MultiKerbal.Client.UI
         public void Ask(VesselHandoverAskMessage message)
         {
             TrackedVessel tracked = _core.Vessels.Find(message.VesselId);
-            string vesselName = tracked?.Name ?? "una nave";
-            string playerName = _core.Players.Get(message.FromPlayerId)?.Name ?? "otro jugador";
+            string vesselName = tracked?.Name ?? Loc.T("una nave", "a vessel");
+            string playerName = _core.Players.Get(message.FromPlayerId)?.Name ?? Loc.T("otro jugador", "another player");
 
             _requests.RemoveAll(r => r.VesselId == message.VesselId && r.PlayerId == message.FromPlayerId);
             _requests.Add(new Request
@@ -41,7 +41,7 @@ namespace MultiKerbal.Client.UI
             });
 
             ScreenMessages.PostScreenMessage(
-                $"{playerName} pide el control de \"{vesselName}\"".Replace("<", "‹"),
+                Loc.T($"{playerName} pide el control de \"{vesselName}\"", $"{playerName} is asking to fly \"{vesselName}\"").Replace("<", "‹"),
                 5f,
                 ScreenMessageStyle.UPPER_CENTER);
         }
@@ -57,7 +57,7 @@ namespace MultiKerbal.Client.UI
             UiStyles.Apply();
             if (_rect.x < 0f)
                 _rect.x = (Screen.width - Width) / 2f;
-            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Petición de control", GUILayout.Width(Width));
+            _rect = GUILayout.Window(WindowId, _rect, _drawContents, Loc.T("Petición de control", "Control request"), GUILayout.Width(Width));
         }
 
         private void DrawContents(int id)
@@ -65,27 +65,33 @@ namespace MultiKerbal.Client.UI
             for (int i = _requests.Count - 1; i >= 0; i--)
             {
                 Request request = _requests[i];
-                GUILayout.Label($"{request.PlayerName} quiere pilotar \"{request.VesselName}\".", UiStyles.Label);
+                GUILayout.Label(
+                    Loc.T($"{request.PlayerName} quiere pilotar \"{request.VesselName}\".",
+                          $"{request.PlayerName} wants to fly \"{request.VesselName}\"."),
+                    UiStyles.Label);
 
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Dársela"))
+                if (GUILayout.Button(Loc.T("Dársela", "Hand it over")))
                 {
                     _core.Vessels.GrantControl(request.VesselId, request.PlayerId);
                     _requests.RemoveAt(i);
                 }
 
-                if (GUILayout.Button("Hacerlo copiloto"))
+                if (GUILayout.Button(Loc.T("Hacerlo copiloto", "Make co-pilot")))
                 {
                     _core.SharedControl.SetCopilot(request.VesselId, request.PlayerId, true);
                     _requests.RemoveAt(i);
                 }
 
-                if (GUILayout.Button("No", GUILayout.Width(70f)))
+                if (GUILayout.Button(Loc.T("No", "No"), GUILayout.Width(70f)))
                     _requests.RemoveAt(i);
                 GUILayout.EndHorizontal();
             }
 
-            GUILayout.Label("Como copiloto sus mandos se suman a los tuyos; tú sigues llevando la nave.", UiStyles.Muted);
+            GUILayout.Label(
+                Loc.T("Como copiloto sus mandos se suman a los tuyos; tú sigues llevando la nave.",
+                      "A co-pilot's controls add to yours; you still fly the vessel."),
+                UiStyles.Muted);
             GUI.DragWindow();
         }
 

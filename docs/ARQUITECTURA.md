@@ -100,11 +100,22 @@ Cliente:
 ### Fase 2 — Ver naves de otros jugadores ✅ (probada con dos jugadores)
 Ver la sección [Naves](#naves). Comprobado en el juego: publicación al lanzar, aparición en la lista de la estación de seguimiento y en el mapa, seguimiento del vuelo, eliminación de escombros y ajustes de warp (aceptar, rechazar, aceptar por ausencia).
 
-### Fase 3 — Interacción entre naves
-- Colisiones: cada piloto simula su nave; las remotas se comportan como cuerpos cinemáticos con tolerancia a impactos elevada.
-- Acoplamiento: lo resuelve el jugador que acopla; el servidor fusiona las naves, reasigna el control y el otro jugador pasa a pasajero hasta desacoplar.
-- EVA junto a naves de otros, embarque y naves que nadie pilota simuladas por el jugador más cercano.
+### Fase 3 — Interacción entre naves ✅ (implementada, pendiente de probar a fondo)
+En lugar de simular cada nave en su dueño y sincronizar los choques, **quien vuela cerca se queda con la física**: al acercarse a menos de 2,2 km a una nave que nadie pilota (y cuyo acceso lo permita), el cliente pide su control y deja de tratarla como marioneta. A partir de ahí KSP hace lo de siempre: chocar, acoplar, EVA. Al acoplarse, KSP funde las dos naves; el cliente publica la resultante y borra la otra, y el servidor se queda con una sola nave.
+
+Cuando la nave sí la pilota otro jugador hay dos caminos, los dos con el servidor de árbitro:
+
+- **Ceder el control** (`VesselHandoverRequest` → `VesselHandoverAsk` → `VesselHandoverGrant`): quien la pilota la suelta y el otro la toma. Es lo que hace falta para acoplarse con una nave que alguien está volando.
+- **Copiloto** (`VesselCopilot`, `VesselInput`, `VesselAction`): quien pilota nombra copiloto a otro jugador. El copiloto lee sus propias teclas (`GameSettings`, ignorando los bloqueos de KSP), las manda a 20 Hz por UDP, y el cliente del piloto las suma a los suyos en `OnFlyByWire`. Las etapas y los grupos de acción van por TCP y solo si el piloto lo permite. La nave la sigue simulando una sola partida: la del piloto.
+
+También se puede **mirar** una nave ajena cargada (a menos de 2,5 km): se hace activa pero sigue siendo marioneta (empaquetada, movida por la red) y los mandos quedan bloqueados.
+
+### Mods
+Cada cliente manda al saludar una entrada por carpeta de `GameData` con la versión de sus DLL (`ModScanner`). El servidor no tiene KSP: guarda la lista del primer jugador en `Universe/mods.json` y compara las demás con ella (`ModCompare`, con pruebas). `ModPolicy` decide qué hacer: `off`, `warn` (avisa por el chat) o `strict` (rechaza). El motivo del rechazo y la lista van también en la respuesta al saludo, así que el jugador puede ver qué le falta aunque no le dejen entrar.
+
+### Idiomas
+Los textos van en el código en los dos idiomas (`Loc.T("es", "en")` en el cliente, `Lang.T` en lo compartido y el servidor), no en un archivo de claves: así no se queda ningún texto a medio traducir sin que se note al leerlo. El cliente elige por el ajuste del jugador o por el idioma de KSP; el servidor, por `Language` en `server.json`.
 
 ### Más adelante
-- Comprobación de la lista de mods al conectar (imprescindible para instalaciones con mods).
 - Progreso compartido (ciencia, fondos, tecnologías) si se juega en carrera.
+- Identidad de jugador con secreto propio: ahora el dueño de una nave es solo un nombre.

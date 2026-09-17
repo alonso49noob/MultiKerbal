@@ -209,7 +209,9 @@ public sealed partial class ServerHost
         BroadcastReliable(ToOwnerMessage(vessel));
         Log.Info($"{player.Name} cambió la nave \"{vessel.Name}\": {previous} → {DescribeOwner(vessel)}");
         if (gifted)
-            SendSystemChat($"{player.Name} le ha regalado la nave \"{vessel.Name}\" a {newOwner}");
+            SendSystemChat(Lang.T(
+                $"{player.Name} le ha regalado la nave \"{vessel.Name}\" a {newOwner}",
+                $"{player.Name} gave the vessel \"{vessel.Name}\" to {newOwner}"));
         RevokeControlIfNotAllowed(vessel);
     }
 
@@ -298,7 +300,9 @@ public sealed partial class ServerHost
         vessel.ControllerId = target.Info.Id;
         SetCopilot(vessel, 0, false);
         BroadcastReliable(new VesselControlMessage { VesselId = vessel.Id, ControllerId = vessel.ControllerId });
-        SendSystemChat($"{player.Name} le ha dado el control de \"{vessel.Name}\" a {target.Name}");
+        SendSystemChat(Lang.T(
+            $"{player.Name} le ha dado el control de \"{vessel.Name}\" a {target.Name}",
+            $"{player.Name} handed \"{vessel.Name}\" over to {target.Name}"));
         Log.Info($"{player.Name} → {target.Name}: control de \"{vessel.Name}\"");
     }
 

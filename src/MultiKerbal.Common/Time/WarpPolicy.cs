@@ -86,11 +86,11 @@ namespace MultiKerbal.Common.Time
 
                 // Con el rechazo activado nunca se acepta automáticamente: si ahora no se cumple ninguna de sus
                 // condiciones, simplemente decide el jugador.
-                return NotAccepting("no se cumple ninguna condición de rechazo: decides tú");
+                return NotAccepting(Lang.T("no se cumple ninguna condición de rechazo: decides tú", "none of the deny conditions apply: it is up to you"));
             }
 
             if (!policy.AutoAccept && !policy.AcceptWhenIdle)
-                return NotAccepting("la aceptación automática está desactivada");
+                return NotAccepting(Lang.T("la aceptación automática está desactivada", "automatic accept is off"));
 
             bool idle = policy.AcceptWhenIdle && context.IdleSeconds >= Math.Max(MinIdleSeconds, policy.IdleSeconds);
             string blocker = idle ? IdleBlocker(context) : AcceptBlocker(policy, context);
@@ -99,12 +99,14 @@ namespace MultiKerbal.Common.Time
 
             double acceptUpTo = Math.Min(Math.Max(1.0, policy.AcceptMaxRate), context.MaxRailsRate);
             if (acceptUpTo <= 1.0)
-                return NotAccepting("KSP no permite warp sobre raíles aquí");
+                return NotAccepting(Lang.T("KSP no permite warp sobre raíles aquí", "KSP does not allow on-rails warp here"));
 
             return new WarpPolicyDecision
             {
                 AcceptUpTo = acceptUpTo,
-                Reason = idle ? $"llevas {FormatSeconds(context.IdleSeconds)} sin tocar nada" : "se cumplen las condiciones",
+                Reason = idle
+                    ? Lang.T($"llevas {FormatSeconds(context.IdleSeconds)} sin tocar nada", $"you have been away for {FormatSeconds(context.IdleSeconds)}")
+                    : Lang.T("se cumplen las condiciones", "the conditions are met"),
             };
         }
 
@@ -114,36 +116,38 @@ namespace MultiKerbal.Common.Time
         private static string DenyReason(WarpPolicy policy, WarpContext context)
         {
             if (!policy.DenyWhileFlying && !policy.DenyAtSpaceCenter && !policy.DenyInAtmosphere && !policy.DenyNearVessels)
-                return "rechazo automático sin condiciones";
+                return Lang.T("rechazo automático sin condiciones", "automatic deny, no conditions");
             if (policy.DenyWhileFlying && context.InFlight)
-                return "estás pilotando";
+                return Lang.T("estás pilotando", "you are flying");
             if (policy.DenyAtSpaceCenter && context.AtSpaceCenter)
-                return "estás en el Centro Espacial";
+                return Lang.T("estás en el Centro Espacial", "you are at the Space Center");
             if (policy.DenyInAtmosphere && context.InAtmosphere)
-                return "tu nave está en la atmósfera";
+                return Lang.T("tu nave está en la atmósfera", "your vessel is in the atmosphere");
             if (policy.DenyNearVessels && context.VesselsNearby)
-                return "hay otras naves cerca";
+                return Lang.T("hay otras naves cerca", "there are other vessels nearby");
             return null;
         }
 
         /// <summary>Estando ausente da igual lo que haga la nave: solo importa que KSP permita warp sobre raíles.</summary>
         private static string IdleBlocker(WarpContext context) =>
-            context.RailsMode ? null : "estás usando warp físico";
+            context.RailsMode ? null : Lang.T("estás usando warp físico", "you are using physics warp");
 
         private static string AcceptBlocker(WarpPolicy policy, WarpContext context)
         {
             if (!policy.AutoAccept)
-                return $"llevas menos de {FormatSeconds(Math.Max(MinIdleSeconds, policy.IdleSeconds))} sin tocar nada";
+                return Lang.T(
+                    $"llevas menos de {FormatSeconds(Math.Max(MinIdleSeconds, policy.IdleSeconds))} sin tocar nada",
+                    $"you have been away for less than {FormatSeconds(Math.Max(MinIdleSeconds, policy.IdleSeconds))}");
             if (!context.RailsMode)
-                return "estás usando warp físico";
+                return Lang.T("estás usando warp físico", "you are using physics warp");
             if (policy.AcceptOnlyOutsideFlight && context.InFlight)
-                return "estás pilotando";
+                return Lang.T("estás pilotando", "you are flying");
             if (policy.AcceptOnlyStable && !context.StableSituation)
-                return "tu nave no está en órbita ni posada";
+                return Lang.T("tu nave no está en órbita ni posada", "your vessel is neither in orbit nor landed");
             if (policy.AcceptOnlyEnginesOff && !context.EnginesOff)
-                return "los motores están encendidos";
+                return Lang.T("los motores están encendidos", "the engines are running");
             if (policy.AcceptOnlyAlone && context.VesselsNearby)
-                return "hay otras naves cerca";
+                return Lang.T("hay otras naves cerca", "there are other vessels nearby");
             return null;
         }
 
