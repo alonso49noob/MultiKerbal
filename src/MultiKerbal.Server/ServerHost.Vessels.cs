@@ -82,6 +82,15 @@ public sealed partial class ServerHost
         _network.Send(player.Connection, ToProtoMessage(vessel));
         if (vessel.LastUpdate != null)
             _network.Send(player.Connection, vessel.LastUpdate);
+        if (vessel.CopilotId != 0)
+        {
+            _network.Send(player.Connection, new VesselCopilotMessage
+            {
+                VesselId = vessel.Id,
+                CopilotId = vessel.CopilotId,
+                AllowActions = vessel.CopilotActions,
+            });
+        }
     }
 
     private void OnVesselProto(Player player, VesselProtoMessage message)
@@ -168,7 +177,10 @@ public sealed partial class ServerHost
 
         var control = new VesselControlMessage { VesselId = vessel.Id, ControllerId = vessel.ControllerId };
         if (vessel.ControllerId != previous)
+        {
+            SetCopilot(vessel, 0, false); // El copiloto lo nombra quien pilota: al cambiar de manos, se cae.
             BroadcastReliable(control);
+        }
         else
             _network.Send(player.Connection, control); // Denegada o sin cambios: solo se responde al solicitante.
     }
@@ -232,6 +244,7 @@ public sealed partial class ServerHost
             return;
 
         vessel.ControllerId = 0;
+        SetCopilot(vessel, 0, false);
         BroadcastReliable(new VesselControlMessage { VesselId = vessel.Id, ControllerId = 0 });
     }
 
@@ -239,13 +252,115 @@ public sealed partial class ServerHost
     {
         foreach (StoredVessel vessel in _vessels.All)
         {
+            if (vessel.CopilotId == player.Info.Id)
+                SetCopilot(vessel, 0, false);
+
             if (vessel.ControllerId != player.Info.Id)
                 continue;
 
             vessel.ControllerId = 0;
+            SetCopilot(vessel, 0, false);
             BroadcastReliable(new VesselControlMessage { VesselId = vessel.Id, ControllerId = 0 });
         }
     }
+
+    /// <summary>"Pídele el control a quien la pilota": el servidor solo hace de mensajero; decide quien la pilota.</summary>
+    private void OnVesselHandoverRequest(Player player, VesselHandoverRequestMessage request)
+    {
+        StoredVessel? vessel = _vessels.Get(request.VesselId);
+        if (vessel == null || vessel.ControllerId == 0 || vessel.ControllerId == player.Info.Id)
+            return;
+
+        if (!VesselPermissions.CanPilot(vessel.OwnerName, vessel.Access, player.Name))
+        {
+            _network.Send(player.Connection, ToOwnerMessage(vessel));
+            return;
+        }
+
+        Player? pilot = PlayerById(vessel.ControllerId);
+        if (pilot == null)
+            return;
+
+        _network.Send(pilot.Connection, new VesselHandoverAskMessage { VesselId = vessel.Id, FromPlayerId = player.Info.Id });
+        Log.Info($"{player.Name} le pide a {pilot.Name} el control de \"{vessel.Name}\"");
+    }
+
+    private void OnVesselHandoverGrant(Player player, VesselHandoverGrantMessage grant)
+    {
+        StoredVessel? vessel = _vessels.Get(grant.VesselId);
+        if (vessel == null || vessel.ControllerId != player.Info.Id)
+            return;
+
+        Player? target = PlayerById(grant.ToPlayerId);
+        if (target == null || !VesselPermissions.CanPilot(vessel.OwnerName, vessel.Access, target.Name))
+            return;
+
+        vessel.ControllerId = target.Info.Id;
+        SetCopilot(vessel, 0, false);
+        BroadcastReliable(new VesselControlMessage { VesselId = vessel.Id, ControllerId = vessel.ControllerId });
+        SendSystemChat($"{player.Name} le ha dado el control de \"{vessel.Name}\" a {target.Name}");
+        Log.Info($"{player.Name} → {target.Name}: control de \"{vessel.Name}\"");
+    }
+
+    /// <summary>Quien pilota nombra (o quita) copiloto. El copiloto también puede renunciar.</summary>
+    private void OnVesselCopilot(Player player, VesselCopilotMessage message)
+    {
+        StoredVessel? vessel = _vessels.Get(message.VesselId);
+        if (vessel == null)
+            return;
+
+        bool resigning = message.CopilotId == 0 && vessel.CopilotId == player.Info.Id;
+        if (vessel.ControllerId != player.Info.Id && !resigning)
+            return;
+
+        Player? copilot = message.CopilotId == 0 ? null : PlayerById(message.CopilotId);
+        if (message.CopilotId != 0 && (copilot == null || copilot.Info.Id == vessel.ControllerId))
+            return;
+
+        SetCopilot(vessel, copilot?.Info.Id ?? 0, message.AllowActions);
+        if (copilot != null)
+            Log.Info($"{player.Name} nombró copiloto de \"{vessel.Name}\" a {copilot.Name}");
+    }
+
+    private void SetCopilot(StoredVessel vessel, int copilotId, bool allowActions)
+    {
+        if (vessel.CopilotId == copilotId && vessel.CopilotActions == allowActions)
+            return;
+
+        vessel.CopilotId = copilotId;
+        vessel.CopilotActions = allowActions;
+        BroadcastReliable(new VesselCopilotMessage
+        {
+            VesselId = vessel.Id,
+            CopilotId = vessel.CopilotId,
+            AllowActions = vessel.CopilotActions,
+        });
+    }
+
+    /// <summary>Mandos del copiloto: solo llegan a quien pilota, que decide qué hace con ellos.</summary>
+    private void OnVesselInput(Player player, VesselInputMessage message)
+    {
+        StoredVessel? vessel = _vessels.Get(message.VesselId);
+        if (vessel == null || vessel.CopilotId != player.Info.Id || vessel.ControllerId == 0)
+            return;
+
+        Player? pilot = PlayerById(vessel.ControllerId);
+        if (pilot != null)
+            _network.Send(pilot.Connection, message, Delivery.Unreliable);
+    }
+
+    private void OnVesselAction(Player player, VesselActionMessage message)
+    {
+        StoredVessel? vessel = _vessels.Get(message.VesselId);
+        if (vessel == null || vessel.CopilotId != player.Info.Id || !vessel.CopilotActions || vessel.ControllerId == 0)
+            return;
+
+        Player? pilot = PlayerById(vessel.ControllerId);
+        if (pilot != null)
+            _network.Send(pilot.Connection, message);
+    }
+
+    private Player? PlayerById(int id) => AuthenticatedPlayers().FirstOrDefault(p => p.Info.Id == id);
 
     /// <summary>Qué ha pedido cada jugador: para ver por qué el warp está donde está.</summary>
     private void ListWarpVotes()

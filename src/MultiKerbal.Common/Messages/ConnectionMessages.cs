@@ -1,3 +1,4 @@
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Serialization;
 
 namespace MultiKerbal.Common.Messages
@@ -14,6 +15,9 @@ namespace MultiKerbal.Common.Messages
         public string ModVersion;
         public string GameVersion;
 
+        /// <summary>Mods instalados en esta copia de KSP (carpetas de GameData).</summary>
+        public ModInfo[] Mods = new ModInfo[0];
+
         public void Write(PacketWriter writer)
         {
             writer.WriteInt32(ProtocolVersion);
@@ -21,6 +25,7 @@ namespace MultiKerbal.Common.Messages
             writer.WriteString(Password);
             writer.WriteString(ModVersion);
             writer.WriteString(GameVersion);
+            WriteMods(writer, Mods);
         }
 
         public void Read(PacketReader reader)
@@ -30,6 +35,24 @@ namespace MultiKerbal.Common.Messages
             Password = reader.ReadString();
             ModVersion = reader.ReadString();
             GameVersion = reader.ReadString();
+            Mods = ReadMods(reader);
+        }
+
+        internal static void WriteMods(PacketWriter writer, ModInfo[] mods)
+        {
+            mods = mods ?? new ModInfo[0];
+            writer.WriteInt32(mods.Length);
+            foreach (ModInfo mod in mods)
+                mod.Write(writer);
+        }
+
+        internal static ModInfo[] ReadMods(PacketReader reader)
+        {
+            int count = reader.ReadCount(ProtocolInfo.MaxMods);
+            var mods = new ModInfo[count];
+            for (int i = 0; i < count; i++)
+                mods[i] = ModInfo.Read(reader);
+            return mods;
         }
     }
 
@@ -47,6 +70,9 @@ namespace MultiKerbal.Common.Messages
         public string ServerName;
         public string Motd;
 
+        /// <summary>Mods que espera el servidor. Va también cuando se rechaza: así se puede ver qué falta.</summary>
+        public ModInfo[] Mods = new ModInfo[0];
+
         public void Write(PacketWriter writer)
         {
             writer.WriteInt32(ProtocolVersion);
@@ -56,6 +82,7 @@ namespace MultiKerbal.Common.Messages
             writer.WriteUInt64(UdpToken);
             writer.WriteString(ServerName);
             writer.WriteString(Motd);
+            HandshakeRequestMessage.WriteMods(writer, Mods);
         }
 
         public void Read(PacketReader reader)
@@ -67,6 +94,7 @@ namespace MultiKerbal.Common.Messages
             UdpToken = reader.ReadUInt64();
             ServerName = reader.ReadString();
             Motd = reader.ReadString();
+            Mods = HandshakeRequestMessage.ReadMods(reader);
         }
     }
 

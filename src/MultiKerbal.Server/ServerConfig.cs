@@ -28,6 +28,12 @@ public sealed class ServerConfig
     /// <summary>Detiene el reloj universal mientras no haya nadie conectado.</summary>
     public bool PauseClockWhenEmpty { get; set; } = true;
 
+    /// <summary>
+    /// Qué hacer con quien no tenga los mismos mods que el servidor:
+    /// <c>off</c> ni se mira, <c>warn</c> se avisa y se entra igual, <c>strict</c> se rechaza la conexión.
+    /// </summary>
+    public string ModPolicy { get; set; } = "warn";
+
     public string DataDirectory { get; set; } = "Universe";
 
     public static ServerConfig LoadOrCreate(string path)
@@ -51,6 +57,13 @@ public sealed class ServerConfig
             throw new InvalidDataException($"Puerto inválido: {Port}");
 
         MaxPlayers = Math.Clamp(MaxPlayers, 1, ProtocolInfo.MaxPlayers);
+        ModPolicy = (ModPolicy ?? "warn").Trim().ToLowerInvariant();
+        if (ModPolicy is not ("off" or "warn" or "strict"))
+        {
+            Log.Warn($"ModPolicy \"{ModPolicy}\" no es válido (off, warn o strict): se usa warn");
+            ModPolicy = "warn";
+        }
+
         ServerName = string.IsNullOrWhiteSpace(ServerName) ? "Servidor MultiKerbal" : ServerName.Trim();
         Password ??= "";
         Motd ??= "";

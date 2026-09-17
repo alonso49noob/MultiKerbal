@@ -24,6 +24,12 @@ internal sealed class StoredVessel
     /// <summary>Jugador que la pilota en esta sesión (0 = nadie). No se guarda en disco.</summary>
     public int ControllerId { get; set; }
 
+    /// <summary>Copiloto: sus mandos se reenvían a quien la pilota (0 = ninguno). No se guarda en disco.</summary>
+    public int CopilotId { get; set; }
+
+    /// <summary>Si el copiloto puede además accionar etapas y grupos de acción.</summary>
+    public bool CopilotActions { get; set; }
+
     public VesselUpdateMessage? LastUpdate { get; set; }
 
     public bool Dirty { get; set; }

@@ -157,5 +157,20 @@ internal static class SampleMessages
         yield return new VesselControlRequestMessage { VesselId = Guid.NewGuid(), Acquire = true };
         yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public };
         yield return new VesselOwnerRequestMessage { VesselId = Guid.NewGuid(), OwnerName = string.Empty, Access = VesselAccess.Shared };
+        yield return new VesselHandoverRequestMessage { VesselId = Guid.NewGuid() };
+        yield return new VesselHandoverAskMessage { VesselId = Guid.NewGuid(), FromPlayerId = 7 };
+        yield return new VesselHandoverGrantMessage { VesselId = Guid.NewGuid(), ToPlayerId = 7 };
+        yield return new VesselCopilotMessage { VesselId = Guid.NewGuid(), CopilotId = 3, AllowActions = true };
+        yield return new VesselInputMessage
+        {
+            VesselId = Guid.NewGuid(),
+            Pitch = -0.5f,
+            Yaw = 0.25f,
+            Roll = 1f,
+            Throttle = -1f,
+            WheelSteer = 0.1f,
+            WheelThrottle = -0.2f,
+        };
+        yield return new VesselActionMessage { VesselId = Guid.NewGuid(), Action = VesselAction.Custom07 };
     }
 }

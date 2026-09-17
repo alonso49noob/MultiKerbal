@@ -21,6 +21,8 @@ namespace MultiKerbal.Common
         public const int MinPlayerNameLength = 2;
         public const int MaxPlayerNameLength = 24;
         public const int MaxChatLength = 500;
+        public const int MaxMods = 2000;
+        public const int MaxModNameLength = 80;
         public const int MaxPlayers = 1024;
 
         public const double PingIntervalSeconds = 2.0;

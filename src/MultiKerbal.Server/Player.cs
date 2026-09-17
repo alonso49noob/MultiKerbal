@@ -1,4 +1,5 @@
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Server.Net;
 
@@ -19,6 +20,9 @@ internal sealed class Player
     public PlayerInfo Info { get; set; } = new();
 
     public WarpVote Vote { get; set; }
+
+    /// <summary>Mods que declaró al entrar, para el comando <c>mods</c>.</summary>
+    public ModInfo[] Mods { get; set; } = [];
 
     public string Name => Info.Name;
 }

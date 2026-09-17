@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using MultiKerbal.Client.Systems;
 using MultiKerbal.Client.UI;
 using MultiKerbal.Client.Vessels;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Time;
 using UnityEngine;
@@ -47,8 +49,15 @@ namespace MultiKerbal.Client
                 id => Players.Get(id)?.Name ?? "otro jugador",
                 () => Settings.DefaultAccess,
                 (message, delivery) => Send(message, delivery));
+            SharedControl = new SharedControlSystem(
+                () => Players.LocalPlayerId,
+                id => Vessels.Find(id) is TrackedVessel tracked && Vessels.IsPilotedByMe(tracked),
+                () => MultiplayerWindow != null && MultiplayerWindow.ChatFocused,
+                (message, delivery) => Send(message, delivery));
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
+            ModsWindow = new ModsWindow(this);
+            HandoverWindow = new HandoverWindow(this);
             _toolbar = new ToolbarButton(SetMultiplayerWindowVisible);
         }
 
@@ -66,9 +75,23 @@ namespace MultiKerbal.Client
 
         public VesselSyncSystem Vessels { get; }
 
+        public SharedControlSystem SharedControl { get; }
+
+        public HandoverWindow HandoverWindow { get; }
+
         public ConnectWindow ConnectWindow { get; }
 
         public MultiplayerWindow MultiplayerWindow { get; }
+
+        public ModsWindow ModsWindow { get; }
+
+        /// <summary>Mods del servidor comparados con los de esta instalación (vacío hasta conectarse).</summary>
+        public List<ModDifference> ModDifferences { get; private set; } = new List<ModDifference>();
+
+        public string ModSummary { get; private set; } = string.Empty;
+
+        /// <summary>Hay diferencias de mods y la partida espera a que el jugador decida si entra igualmente.</summary>
+        public bool WaitingForModCheck { get; private set; }
 
         public SessionState State { get; private set; }
 
@@ -146,7 +169,7 @@ namespace MultiKerbal.Client
             if (State != SessionState.Joined)
                 return;
 
-            if (_startGamePending && Clock.HasState && HighLogic.LoadedScene == GameScenes.MAINMENU)
+            if (_startGamePending && Clock.HasState && !WaitingForModCheck && HighLogic.LoadedScene == GameScenes.MAINMENU)
                 StartGame();
 
             if (ClientScenes.IsGameplay)
@@ -170,6 +193,7 @@ namespace MultiKerbal.Client
             Warp.Update();
             _status.Update(message => Send(message));
             Vessels.Update();
+            SharedControl.Update();
         }
 
         public void OnGUI()
@@ -181,6 +205,7 @@ namespace MultiKerbal.Client
             if (HighLogic.LoadedScene == GameScenes.MAINMENU)
             {
                 ConnectWindow.Draw();
+                ModsWindow.Draw();
                 return;
             }
 
@@ -188,7 +213,10 @@ namespace MultiKerbal.Client
                 return;
 
             RemoteVesselLabels.Draw(this);
+            SpectateBanner.Draw(this);
             MultiplayerWindow.Draw();
+            ModsWindow.Draw();
+            HandoverWindow.Draw();
         }
 
         public void Shutdown(string reason)
@@ -259,6 +287,7 @@ namespace MultiKerbal.Client
                 Password = _password,
                 ModVersion = ModVersion,
                 GameVersion = Versioning.VersionString,
+                Mods = ModScanner.Installed,
             });
         }
 
@@ -291,11 +320,20 @@ namespace MultiKerbal.Client
                 case VesselOwnerMessage _:
                     Vessels.Handle(message);
                     break;
+                case VesselCopilotMessage _:
+                case VesselInputMessage _:
+                case VesselActionMessage _:
+                    SharedControl.Handle(message);
+                    break;
+                case VesselHandoverAskMessage ask:
+                    HandoverWindow.Ask(ask);
+                    break;
             }
         }
 
         private void OnHandshakeResponse(HandshakeResponseMessage response)
         {
+            CompareMods(response);
             if (!response.Accepted)
             {
                 // El servidor cierra justo después; el motivo llega también con la desconexión.
@@ -315,6 +353,33 @@ namespace MultiKerbal.Client
             if (!string.IsNullOrEmpty(response.Motd))
                 Chat.Add(ServerName, response.Motd, SystemColor, true);
             ClientLog.Info($"Unido a \"{ServerName}\" como {Settings.PlayerName} (jugador {response.PlayerId})");
+        }
+
+        /// <summary>
+        /// Compara los mods con los del servidor. Si algo no coincide se abre la ventana y la partida espera:
+        /// mejor verlo antes de entrar que descubrirlo cuando una nave no se carga.
+        /// </summary>
+        private void CompareMods(HandshakeResponseMessage response)
+        {
+            ModDifferences = ModCompare.Compare(response.Mods, ModScanner.Installed);
+            ModSummary = ModDifferences.Count == 0
+                ? "El servidor todavía no tiene lista de mods."
+                : "Respecto al servidor: " + ModCompare.Summarize(ModDifferences);
+
+            bool problems = ModDifferences.Exists(d => d.IsProblem);
+            WaitingForModCheck = problems && response.Accepted;
+            if (!problems)
+                return;
+
+            ClientLog.Warn($"Mods: {ModSummary}");
+            ModsWindow.Visible = true;
+        }
+
+        /// <summary>El jugador decide entrar aunque los mods no coincidan.</summary>
+        public void AcceptMods()
+        {
+            WaitingForModCheck = false;
+            Chat.Add("MultiKerbal", ModSummary, SystemColor, true);
         }
 
         private void OnChat(ChatMessage chat)
@@ -360,8 +425,11 @@ namespace MultiKerbal.Client
             Players.Clear();
             Warp.Reset();
             Vessels.Reset();
+            SharedControl.Reset();
+            HandoverWindow.Clear();
             TimeSync.RequestHardSync();
             _status.Reset();
+            WaitingForModCheck = false;
             _startGamePending = false;
             _enteredGame = false;
             ServerName = string.Empty;

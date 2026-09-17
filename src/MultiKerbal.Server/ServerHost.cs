@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Server.Net;
@@ -27,6 +28,7 @@ public sealed partial class ServerHost
     private readonly NetworkServer _network;
     private readonly UniverseStore _universe;
     private readonly VesselStore _vessels;
+    private readonly ModStore _mods;
     private readonly TimeSystem _time = new();
     /// <summary>Por id de conexión (incluye conexiones aún sin saludo).</summary>
     private readonly Dictionary<int, Player> _players = new();
@@ -44,6 +46,7 @@ public sealed partial class ServerHost
         _network = new NetworkServer(_inbound, _clock);
         _universe = new UniverseStore(config.DataDirectory);
         _vessels = new VesselStore(_universe.DirectoryPath);
+        _mods = new ModStore(_universe.DirectoryPath);
     }
 
     public ServerConfig Config { get; }
@@ -54,6 +57,7 @@ public sealed partial class ServerHost
     {
         UniverseData data = _universe.Load();
         _vessels.Load();
+        _mods.Load();
         double now = _clock.Now;
         _time.Initialize(data.UniversalTime, now);
         if (!Config.PauseClockWhenEmpty)
@@ -67,6 +71,9 @@ public sealed partial class ServerHost
 
         Log.Info($"Servidor \"{Config.ServerName}\" escuchando en el puerto {Port} (TCP y UDP)");
         Log.Info($"Universo en {_universe.DirectoryPath} — {KerbalTime.Format(data.UniversalTime)}, {_vessels.Count} nave(s)");
+        Log.Info(_mods.HasReference
+            ? $"Mods esperados: {_mods.Mods.Length} (de {_mods.Source}), control \"{Config.ModPolicy}\""
+            : $"Sin lista de mods: se tomará la del primer jugador (control \"{Config.ModPolicy}\")");
     }
 
     public void EnqueueCommand(string line) => _inbound.Enqueue(new ServerEvent(ServerEventKind.Command, Text: line));
@@ -269,6 +276,21 @@ public sealed partial class ServerHost
             case VesselOwnerRequestMessage owner:
                 OnVesselOwnerRequest(player, owner);
                 break;
+            case VesselHandoverRequestMessage handover:
+                OnVesselHandoverRequest(player, handover);
+                break;
+            case VesselHandoverGrantMessage grant:
+                OnVesselHandoverGrant(player, grant);
+                break;
+            case VesselCopilotMessage copilot:
+                OnVesselCopilot(player, copilot);
+                break;
+            case VesselInputMessage input:
+                OnVesselInput(player, input);
+                break;
+            case VesselActionMessage action:
+                OnVesselAction(player, action);
+                break;
             case DisconnectMessage disconnect:
                 string reason = SanitizeText(disconnect.Reason, 100);
                 _network.Close(connection, reason.Length > 0 ? reason : "Salió del juego");
@@ -282,6 +304,7 @@ public sealed partial class ServerHost
     private void OnHandshake(Player player, HandshakeRequestMessage request)
     {
         string? rejection = ValidateHandshake(request, Config, AuthenticatedPlayers().Select(p => p.Name));
+        List<ModDifference> modDifferences = CheckMods(request, ref rejection);
         if (rejection != null)
         {
             _network.Send(player.Connection, new HandshakeResponseMessage
@@ -289,6 +312,7 @@ public sealed partial class ServerHost
                 ProtocolVersion = ProtocolInfo.Version,
                 Accepted = false,
                 RejectReason = rejection,
+                Mods = _mods.Mods,
             });
             _network.Kick(player.Connection, rejection);
             Log.Info($"Conexión #{player.Connection.Id} rechazada: {rejection}");
@@ -310,6 +334,7 @@ public sealed partial class ServerHost
             Detail = string.Empty,
         };
         player.Vote = new WarpVote { PlayerName = player.Name, Participating = false, Rate = 1.0, Mode = WarpMode.Rails };
+        player.Mods = request.Mods ?? [];
         _network.RegisterUdpToken(player.Connection, CreateUdpToken());
 
         if (firstPlayer)
@@ -323,6 +348,7 @@ public sealed partial class ServerHost
             UdpToken = player.Connection.UdpToken,
             ServerName = Config.ServerName,
             Motd = Config.Motd,
+            Mods = _mods.Mods,
         });
         _network.Send(player.Connection, new PlayerListMessage { Players = AuthenticatedPlayers().Select(p => p.Info).ToArray() });
         _network.Send(player.Connection, _time.BuildState(now));
@@ -331,6 +357,44 @@ public sealed partial class ServerHost
         SendSystemChat($"{player.Name} se ha unido a la partida");
 
         Log.Info($"{player.Name} (jugador {playerId}) se ha unido desde {player.Connection.RemoteEndPoint} — MultiKerbal {request.ModVersion}, KSP {request.GameVersion}");
+        AnnounceMods(player, modDifferences);
+    }
+
+    /// <summary>
+    /// Compara los mods del que entra con los que espera el servidor. El primer jugador fija la lista.
+    /// Con <c>strict</c> rellena el motivo de rechazo; con <c>warn</c> solo devuelve las diferencias.
+    /// </summary>
+    private List<ModDifference> CheckMods(HandshakeRequestMessage request, ref string? rejection)
+    {
+        if (rejection != null || Config.ModPolicy == "off")
+            return [];
+
+        if (!_mods.HasReference)
+        {
+            if (request.Mods is { Length: > 0 })
+            {
+                _mods.Set(request.Mods, ServerHost.SanitizeText(request.PlayerName, ProtocolInfo.MaxPlayerNameLength));
+                Log.Info($"Lista de mods tomada de {_mods.Source}: {_mods.Mods.Length} mod(s)");
+            }
+
+            return [];
+        }
+
+        List<ModDifference> differences = ModCompare.Compare(_mods.Mods, request.Mods);
+        if (Config.ModPolicy == "strict" && differences.Any(d => d.IsProblem))
+            rejection = $"Tus mods no coinciden con los del servidor: {ModCompare.Summarize(differences)}";
+
+        return differences;
+    }
+
+    private void AnnounceMods(Player player, List<ModDifference> differences)
+    {
+        if (differences.Count == 0 || !differences.Any(d => d.IsProblem))
+            return;
+
+        string summary = ModCompare.Summarize(differences);
+        Log.Warn($"Mods de {player.Name}: {summary}");
+        SendSystemChat($"Los mods de {player.Name} no coinciden con los del servidor: {summary}");
     }
 
     private void OnChat(Player player, ChatMessage chat)

@@ -1,4 +1,5 @@
 using System;
+using MultiKerbal.Client.Systems;
 using MultiKerbal.Client.Vessels;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Vessels;
@@ -14,6 +15,7 @@ namespace MultiKerbal.Client.UI
     {
         private const int WindowId = 0x4D4B0005;
         private const float Width = 480f;
+        private const float PlayerColumn = 130f;
 
         private static readonly VesselAccess[] Accesses = { VesselAccess.Private, VesselAccess.Shared, VesselAccess.Public };
 
@@ -24,6 +26,8 @@ namespace MultiKerbal.Client.UI
 
         /// <summary>Acción que espera un segundo clic de confirmación (regalar, dejar sin dueño).</summary>
         private string _confirm;
+
+        private bool _copilotActions = true;
 
         public VesselOwnershipWindow(ClientCore core)
         {
@@ -54,7 +58,7 @@ namespace MultiKerbal.Client.UI
             }
 
             UiStyles.Apply();
-            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Propiedad de la nave", GUILayout.Width(Width));
+            _rect = GUILayout.Window(WindowId, _rect, _drawContents, "Nave: dueño y control", GUILayout.Width(Width));
         }
 
         public static string Explain(VesselAccess access)
@@ -109,11 +113,96 @@ namespace MultiKerbal.Client.UI
                 GUILayout.Label($"Solo {tracked.OwnerName} puede cambiarlo.", UiStyles.Muted);
             }
 
+            DrawControl(tracked);
+
             GUILayout.Space(8f);
             if (GUILayout.Button("Cerrar"))
                 Visible = false;
 
             GUI.DragWindow();
+        }
+
+        /// <summary>Quién la pilota ahora: ceder el control, pedirlo, mirar o repartir los mandos con un copiloto.</summary>
+        private void DrawControl(TrackedVessel tracked)
+        {
+            GUILayout.Space(10f);
+            GUILayout.Label("Control", UiStyles.Bold);
+
+            if (_core.Vessels.IsPilotedByMe(tracked))
+            {
+                DrawPilotControls(tracked);
+                return;
+            }
+
+            if (!_core.Vessels.IsPilotedByOther(tracked))
+            {
+                GUILayout.Label("No la pilota nadie: acércate a ella y vuela con ella.", UiStyles.Muted);
+                return;
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Pedirle el control"))
+                _core.Vessels.RequestHandover(tracked);
+            if (GUILayout.Button("Mirarla"))
+            {
+                if (!_core.Vessels.BeginSpectate(tracked, out string error))
+                    ScreenMessages.PostScreenMessage(error, 5f, ScreenMessageStyle.UPPER_CENTER);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Para acoplarte necesitas que quien la pilota te la ceda o que la suelte.", UiStyles.Muted);
+        }
+
+        private void DrawPilotControls(TrackedVessel tracked)
+        {
+            int copilotId = _core.SharedControl.CopilotOf(tracked.Id);
+            PlayerInfo copilot = _core.Players.Get(copilotId);
+            GUILayout.Label(
+                copilot != null
+                    ? $"La pilotas tú, con {copilot.Name} de copiloto."
+                    : "La pilotas tú. Puedes cederla o repartir los mandos con un copiloto.",
+                UiStyles.Label);
+
+            bool anyone = false;
+            foreach (PlayerInfo player in _core.Players.All)
+            {
+                if (player.Id == _core.Players.LocalPlayerId)
+                    continue;
+
+                anyone = true;
+                GUILayout.BeginHorizontal();
+                UiStyles.ColoredLabel(player.Name, PlayerRegistry.ColorOf(player), GUILayout.Width(PlayerColumn));
+                if (ConfirmButton("ceder:" + player.Name, "Cederle la nave", $"¿Seguro? {player.Name} la pilotará. Pulsa otra vez"))
+                    _core.Vessels.GrantControl(tracked.Id, player.Id);
+
+                if (copilotId == player.Id)
+                {
+                    if (GUILayout.Button("Quitar copiloto"))
+                        _core.SharedControl.SetCopilot(tracked.Id, 0, false);
+                }
+                else if (GUILayout.Button("Copiloto"))
+                {
+                    _core.SharedControl.SetCopilot(tracked.Id, player.Id, _copilotActions);
+                }
+
+                GUILayout.EndHorizontal();
+            }
+
+            if (!anyone)
+            {
+                GUILayout.Label("No hay otros jugadores conectados", UiStyles.Muted);
+                return;
+            }
+
+            bool actions = GUILayout.Toggle(_copilotActions, "El copiloto también puede accionar etapas y grupos de acción");
+            if (actions != _copilotActions)
+            {
+                _copilotActions = actions;
+                if (copilotId != 0)
+                    _core.SharedControl.SetCopilot(tracked.Id, copilotId, actions);
+            }
+
+            GUILayout.Label("Los mandos del copiloto se suman a los tuyos; la nave la sigue simulando tu partida.", UiStyles.Muted);
         }
 
         private string DescribePilot(TrackedVessel tracked)

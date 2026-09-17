@@ -13,6 +13,11 @@ namespace MultiKerbal.Client.UI
 
         public static GUIStyle Muted { get; private set; }
 
+        /// <summary>Marcas de sí/no. La fuente de KSP no siempre trae ✓ y ✗: si faltan, se usa texto.</summary>
+        public static string Tick { get; private set; } = "OK";
+
+        public static string Cross { get; private set; } = "X";
+
         /// <summary>Llamar dentro de OnGUI: Unity solo permite crear GUIStyle ahí.</summary>
         public static void Apply()
         {
@@ -25,6 +30,11 @@ namespace MultiKerbal.Client.UI
             Bold = new GUIStyle(Label) { fontStyle = FontStyle.Bold };
             Muted = new GUIStyle(Label);
             Muted.normal.textColor = new Color(0.72f, 0.72f, 0.72f);
+
+            Font font = _skin.font ?? GUI.skin.font;
+            bool symbols = font != null && font.HasCharacter('✓') && font.HasCharacter('✗');
+            Tick = symbols ? "✓" : "OK";
+            Cross = symbols ? "✗" : "X";
         }
 
         /// <summary>Etiqueta coloreada reutilizando el mismo estilo (Unity pinta dentro de la llamada).</summary>

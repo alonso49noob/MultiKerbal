@@ -1,3 +1,4 @@
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Server;
 
 namespace MultiKerbal.Tests;
@@ -8,9 +9,12 @@ internal sealed class TestServer : IDisposable
     private readonly string _dataDirectory = Path.Combine(Path.GetTempPath(), "MultiKerbalTests", Guid.NewGuid().ToString("N"));
     private readonly List<TestClient> _clients = new();
 
-    public TestServer()
+    private readonly string _modPolicy;
+
+    public TestServer(string modPolicy = "warn")
     {
         Log.ConsoleEnabled = false;
+        _modPolicy = modPolicy;
         Host = StartHost();
     }
 
@@ -19,6 +23,10 @@ internal sealed class TestServer : IDisposable
     public int Port => Host.Port;
 
     public TestClient Join(string name) => Track(TestClient.Join(Port, name));
+
+    public TestClient Join(string name, params ModInfo[] mods) => Track(TestClient.Join(Port, name, null, mods));
+
+    public TestClient TryJoin(string name, params ModInfo[] mods) => Track(TestClient.TryJoin(Port, name, null, mods));
 
     public TestClient Track(TestClient client)
     {
@@ -53,6 +61,7 @@ internal sealed class TestServer : IDisposable
             Port = 0,
             DataDirectory = _dataDirectory,
             ServerName = "Servidor de pruebas",
+            ModPolicy = _modPolicy,
         });
         host.Start();
         return host;

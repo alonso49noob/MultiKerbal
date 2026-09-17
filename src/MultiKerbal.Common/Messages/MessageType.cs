@@ -33,5 +33,13 @@ namespace MultiKerbal.Common.Messages
         VesselControlRequest = 64,
         VesselOwner = 65,
         VesselOwnerRequest = 66,
+
+        // Control compartido
+        VesselHandoverRequest = 67,
+        VesselHandoverAsk = 68,
+        VesselHandoverGrant = 69,
+        VesselCopilot = 70,
+        VesselInput = 71,
+        VesselAction = 72,
     }
 }

@@ -1,5 +1,6 @@
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
 
 namespace MultiKerbal.Tests;
@@ -22,7 +23,15 @@ internal sealed class TestClient : IDisposable
         return client;
     }
 
-    public static TestClient Join(int port, string name, string? password = null)
+    public static TestClient Join(int port, string name, string? password = null, ModInfo[]? mods = null)
+    {
+        TestClient client = TryJoin(port, name, password, mods);
+        Assert.True(client.Welcome!.Accepted, client.Welcome.RejectReason);
+        return client;
+    }
+
+    /// <summary>Como <see cref="Join"/> pero sin exigir que el servidor acepte (para probar rechazos).</summary>
+    public static TestClient TryJoin(int port, string name, string? password = null, ModInfo[]? mods = null)
     {
         TestClient client = Connect(port);
         client.Send(new HandshakeRequestMessage
@@ -32,11 +41,10 @@ internal sealed class TestClient : IDisposable
             Password = password,
             ModVersion = "test",
             GameVersion = "test",
+            Mods = mods ?? [],
         });
 
-        HandshakeResponseMessage response = client.WaitFor<HandshakeResponseMessage>();
-        Assert.True(response.Accepted, response.RejectReason);
-        client.Welcome = response;
+        client.Welcome = client.WaitFor<HandshakeResponseMessage>();
         return client;
     }
 

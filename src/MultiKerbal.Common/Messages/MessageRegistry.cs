@@ -28,6 +28,12 @@ namespace MultiKerbal.Common.Messages
             { MessageType.VesselControlRequest, () => new VesselControlRequestMessage() },
             { MessageType.VesselOwner, () => new VesselOwnerMessage() },
             { MessageType.VesselOwnerRequest, () => new VesselOwnerRequestMessage() },
+            { MessageType.VesselHandoverRequest, () => new VesselHandoverRequestMessage() },
+            { MessageType.VesselHandoverAsk, () => new VesselHandoverAskMessage() },
+            { MessageType.VesselHandoverGrant, () => new VesselHandoverGrantMessage() },
+            { MessageType.VesselCopilot, () => new VesselCopilotMessage() },
+            { MessageType.VesselInput, () => new VesselInputMessage() },
+            { MessageType.VesselAction, () => new VesselActionMessage() },
         };
 
         public static IEnumerable<MessageType> RegisteredTypes => Factories.Keys;

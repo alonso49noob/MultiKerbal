@@ -38,6 +38,9 @@ namespace MultiKerbal.Client.UI
             _ownership = new VesselOwnershipWindow(core);
         }
 
+        /// <summary>El foco está en el cuadro del chat: las teclas son texto, no mandos.</summary>
+        public bool ChatFocused => _inputFocused;
+
         public bool Visible
         {
             get => _visible;
@@ -89,6 +92,8 @@ namespace MultiKerbal.Client.UI
                 _warpSettings.Visible = !_warpSettings.Visible;
             if (GUILayout.Button("Etiquetas"))
                 _labelSettings.Visible = !_labelSettings.Visible;
+            if (GUILayout.Button("Mods"))
+                _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
             if (GUILayout.Button("Desconectar"))
                 _core.Disconnect("Desconectado por el jugador");
             if (GUILayout.Button("Cerrar"))
@@ -158,7 +163,7 @@ namespace MultiKerbal.Client.UI
                 GUILayout.Label(DescribeOwner(tracked), UiStyles.Muted, GUILayout.Width(125f));
                 GUILayout.Label(DescribePilot(tracked), UiStyles.Muted, GUILayout.Width(85f));
                 GUILayout.Label(DescribeDistance(tracked, active), UiStyles.Muted);
-                if (GUILayout.Button("Dueño", GUILayout.Width(58f)))
+                if (GUILayout.Button("Nave", GUILayout.Width(58f)))
                     _ownership.Toggle(tracked.Id);
                 GUILayout.EndHorizontal();
             }

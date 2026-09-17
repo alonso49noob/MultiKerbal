@@ -77,9 +77,14 @@ namespace MultiKerbal.Client.UI
                 _core.Disconnect("Conexión cancelada");
             }
 
+            if (GUILayout.Button("Mods", GUILayout.Width(70f)))
+                _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
             if (GUILayout.Button("Ocultar", GUILayout.Width(LabelWidth)))
                 Visible = false;
             GUILayout.EndHorizontal();
+
+            if (_core.ModDifferences.Count > 0)
+                GUILayout.Label(_core.ModSummary, UiStyles.Muted);
 
             GUI.DragWindow();
         }

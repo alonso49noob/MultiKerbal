@@ -1,4 +1,5 @@
 using MultiKerbal.Common;
+using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Time;
 
 namespace MultiKerbal.Server;
@@ -19,7 +20,7 @@ public sealed partial class ServerHost
         {
             case "help":
             case "ayuda":
-                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
+                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
                 break;
 
             case "vessels":
@@ -30,6 +31,10 @@ public sealed partial class ServerHost
             case "owner":
             case "dueño":
                 SetOwnerCommand(arguments);
+                break;
+
+            case "mods":
+                ModsCommand(arguments);
                 break;
 
             case "warp":
@@ -84,6 +89,63 @@ public sealed partial class ServerHost
                 break;
         }
     }
+
+    /// <summary>
+    /// <c>mods</c> lista los mods que espera el servidor, <c>mods &lt;jugador&gt;</c> compara con los suyos y
+    /// <c>mods set &lt;jugador&gt;</c> adopta los de ese jugador como los del servidor.
+    /// </summary>
+    private void ModsCommand(string arguments)
+    {
+        bool adopt = arguments.StartsWith("set ", StringComparison.OrdinalIgnoreCase);
+        string playerName = adopt ? arguments[4..].Trim() : arguments.Trim();
+
+        if (playerName.Length == 0)
+        {
+            Log.Info(_mods.HasReference
+                ? $"{_mods.Mods.Length} mod(s) esperados (de {_mods.Source}), control \"{Config.ModPolicy}\":"
+                : $"Sin lista de mods: la fijará el primer jugador (control \"{Config.ModPolicy}\")");
+            foreach (ModInfo mod in _mods.Mods.OrderBy(m => m.Name))
+                Log.Info($"  {mod.Name}{(mod.Version.Length > 0 ? " " + mod.Version : string.Empty)}");
+            return;
+        }
+
+        Player? target = FindPlayer(playerName);
+        if (target == null)
+        {
+            Log.Info($"No hay ningún jugador llamado \"{playerName}\"");
+            return;
+        }
+
+        if (adopt)
+        {
+            _mods.Set(target.Mods, target.Name);
+            Log.Info($"Lista de mods actualizada con la de {target.Name}: {_mods.Mods.Length} mod(s)");
+            return;
+        }
+
+        List<ModDifference> differences = ModCompare.Compare(_mods.Mods, target.Mods);
+        Log.Info($"{target.Name}: {ModCompare.Summarize(differences)}");
+        foreach (ModDifference difference in differences.Where(d => d.IsProblem))
+            Log.Info($"  {Describe(difference)}");
+    }
+
+    private static string Describe(ModDifference difference)
+    {
+        switch (difference.Status)
+        {
+            case ModStatus.Missing:
+                return $"falta {difference.Name} {difference.ServerVersion}".TrimEnd();
+            case ModStatus.Extra:
+                return $"sobra {difference.Name} {difference.PlayerVersion}".TrimEnd();
+            case ModStatus.OtherVersion:
+                return $"{difference.Name}: servidor {difference.ServerVersion}, jugador {difference.PlayerVersion}";
+            default:
+                return difference.Name;
+        }
+    }
+
+    private Player? FindPlayer(string name) =>
+        AuthenticatedPlayers().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Los nombres pueden tener espacios: se busca el jugador cuyo nombre sea prefijo de los argumentos.</summary>
     private void Kick(string arguments)
