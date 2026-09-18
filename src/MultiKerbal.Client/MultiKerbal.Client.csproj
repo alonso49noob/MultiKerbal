@@ -7,6 +7,7 @@
     <AssemblyName>MultiKerbal.Client</AssemblyName>
     <KSPManaged>$(KSPDir)\KSP_x64_Data\Managed</KSPManaged>
     <ModGameData>$(KSPDir)\GameData\MultiKerbal</ModGameData>
+    <VersionFilePath>$(MSBuildProjectDirectory)\MultiKerbal.version</VersionFilePath>
   </PropertyGroup>
 
   <Target Name="CheckKSPDir" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(KSPManaged)\Assembly-CSharp.dll')">
@@ -30,13 +31,39 @@
     <ProjectReference Include="..\MultiKerbal.Common\MultiKerbal.Common.csproj" />
   </ItemGroup>
 
+  <!--
+    Archivo de versión de KSP-AVC. Se genera desde $(Version) para que nunca se desincronice, y va dentro del
+    zip del mod: es de donde CKAN saca la versión y para qué versiones de KSP sirve.
+  -->
+  <Target Name="WriteVersionFile" AfterTargets="Build">
+    <PropertyGroup>
+      <AvcMajor>$([System.Version]::Parse('$(Version)').Major)</AvcMajor>
+      <AvcMinor>$([System.Version]::Parse('$(Version)').Minor)</AvcMinor>
+      <AvcPatch>$([System.Version]::Parse('$(Version)').Build)</AvcPatch>
+      <AvcJson>
+{
+    "NAME": "MultiKerbal",
+    "URL": "https://raw.githubusercontent.com/alonso49noob/MultiKerbal/main/src/MultiKerbal.Client/MultiKerbal.version",
+    "DOWNLOAD": "https://github.com/alonso49noob/MultiKerbal/releases",
+    "GITHUB": { "USERNAME": "alonso49noob", "REPOSITORY": "MultiKerbal" },
+    "VERSION": { "MAJOR": $(AvcMajor), "MINOR": $(AvcMinor), "PATCH": $(AvcPatch), "BUILD": 0 },
+    "KSP_VERSION": { "MAJOR": 1, "MINOR": 12, "PATCH": 5 },
+    "KSP_VERSION_MIN": { "MAJOR": 1, "MINOR": 12, "PATCH": 0 },
+    "KSP_VERSION_MAX": { "MAJOR": 1, "MINOR": 12, "PATCH": 5 }
+}
+      </AvcJson>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(VersionFilePath)" Lines="$(AvcJson.Trim())" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
   <!-- Copia el mod a GameData al compilar (DeployToKSP=true en LocalDev.props). -->
-  <Target Name="DeployToKSP" AfterTargets="Build" Condition="'$(DeployToKSP)' == 'true'">
+  <Target Name="DeployToKSP" AfterTargets="WriteVersionFile" Condition="'$(DeployToKSP)' == 'true'">
     <ItemGroup>
       <ModPlugins Include="$(OutDir)MultiKerbal.Client.dll;$(OutDir)MultiKerbal.Common.dll" />
       <ModPlugins Include="$(OutDir)MultiKerbal.Client.pdb;$(OutDir)MultiKerbal.Common.pdb" Condition="Exists('$(OutDir)MultiKerbal.Client.pdb')" />
     </ItemGroup>
     <Copy SourceFiles="@(ModPlugins)" DestinationFolder="$(ModGameData)\Plugins" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(VersionFilePath)" DestinationFolder="$(ModGameData)" SkipUnchangedFiles="true" />
     <Message Importance="high" Text="MultiKerbal desplegado en $(ModGameData)" />
   </Target>
 

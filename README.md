@@ -72,3 +72,7 @@ Identity is the player name: while a vessel's owner is offline, somebody else co
 `E:\KSP-Dev2` is a second instance linked (directory junctions and hard links) to `E:\KSP-Dev`: same game and mods, but its own `settings.cfg`, saves, logs and player name (`PluginData/MultiKerbal/settings.cfg`).
 
 **Start them one at a time:** launch the second one once the first has reached the main menu. While loading, KSP opens the files in `GameData` exclusively; if both load at once, part models fail (`IOException: Sharing violation` in `KSP.log`) and one instance can hang.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bug reports and pull requests are welcome.

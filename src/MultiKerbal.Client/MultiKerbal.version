@@ -1,0 +1,10 @@
+{
+    "NAME": "MultiKerbal",
+    "URL": "https://raw.githubusercontent.com/alonso49noob/MultiKerbal/main/src/MultiKerbal.Client/MultiKerbal.version",
+    "DOWNLOAD": "https://github.com/alonso49noob/MultiKerbal/releases",
+    "GITHUB": { "USERNAME": "alonso49noob", "REPOSITORY": "MultiKerbal" },
+    "VERSION": { "MAJOR": 0, "MINOR": 1, "PATCH": 0, "BUILD": 0 },
+    "KSP_VERSION": { "MAJOR": 1, "MINOR": 12, "PATCH": 5 },
+    "KSP_VERSION_MIN": { "MAJOR": 1, "MINOR": 12, "PATCH": 0 },
+    "KSP_VERSION_MAX": { "MAJOR": 1, "MINOR": 12, "PATCH": 5 }
+}

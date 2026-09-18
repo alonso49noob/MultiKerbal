@@ -79,3 +79,7 @@ El jugador se identifica solo por su nombre: mientras el dueño de una nave no e
 `E:\KSP-Dev2` es una segunda instancia enlazada (uniones de directorio y enlaces duros) a `E:\KSP-Dev`: comparte juego y mods pero tiene su propio `settings.cfg`, partidas, logs y nombre de jugador (`PluginData/MultiKerbal/settings.cfg`).
 
 **Ábrelas de una en una:** arranca la segunda cuando la primera ya esté en el menú principal. Mientras carga, KSP abre en exclusiva los archivos de `GameData`; si las dos cargan a la vez, fallan los modelos de las piezas (`IOException: Sharing violation` en `KSP.log`) y una de ellas puede quedarse colgada.
+
+## Licencia
+
+MIT, en [LICENSE](LICENSE). Los avisos de fallos y los pull requests son bienvenidos.
