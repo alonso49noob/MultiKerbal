@@ -12,3 +12,6 @@ LocalDev.props
 
 # Datos generados al ejecutar el servidor en local
 run/
+
+# Zips de las releases (tools/Package.ps1)
+dist/

@@ -18,21 +18,28 @@ Multiplayer mod for **Kerbal Space Program 1.12.5**: a dedicated server and one 
 
 ## Installation
 
-You need two things: **the mod**, which every player installs in KSP, and **the server**, which only one person runs. Everyone, the server included, should use the same MultiKerbal version.
+You need two things: **the mod**, which every player installs in KSP, and **the server**, which only one person runs. They are separate downloads on the [Releases page](https://github.com/alonso49noob/MultiKerbal/releases):
 
-Downloads are on the [Releases page](https://github.com/alonso49noob/MultiKerbal/releases).
+| Release | File | For |
+|---|---|---|
+| **MultiKerbal** *x.y.z* | `MultiKerbal-x.y.z-mod.zip` | Every player (client side). |
+| **MultiKerbal Server** *x.y.z* | `MultiKerbal-Server-x.y.z.zip` | Whoever hosts the game (server side). |
+
+Everyone, the server included, should use the same version number.
 
 ### 1. The mod (every player)
 
 **By hand:**
 
 1. Download `MultiKerbal-<version>-mod.zip`.
-2. Unzip it into your KSP folder, the one that contains `KSP_x64.exe`. The zip already has a `GameData` folder inside, so the files end up in the right place:
+2. Unzip it. You get a single folder, `MultiKerbal`.
+3. Move that folder into the `GameData` folder of your KSP installation (next to the `Squad` folder):
 
    ```
    Kerbal Space Program/
    └── GameData/
-       └── MultiKerbal/
+       ├── Squad/
+       └── MultiKerbal/          ← the folder from the zip
            ├── LICENSE
            ├── MultiKerbal.version
            ├── README.md
@@ -41,7 +48,7 @@ Downloads are on the [Releases page](https://github.com/alonso49noob/MultiKerbal
                └── MultiKerbal.Common.dll
    ```
 
-3. Start KSP. A **MultiKerbal** window appears in the main menu.
+4. Start KSP. A **MultiKerbal** window appears in the main menu.
 
 **With CKAN:** the mod has been [submitted](https://github.com/KSP-CKAN/NetKAN/pull/11575) and is waiting for review. Once it is listed, search for *MultiKerbal* in CKAN and install it like any other mod.
 
@@ -50,10 +57,10 @@ The mod needs no other mods. It only works with KSP 1.12.x.
 ### 2. The server (one person)
 
 1. Install the **[.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)** (the "Runtime" download is enough, you do not need the SDK).
-2. Download `MultiKerbal-<version>-server.zip` and unzip it into a folder of its own, **not** inside KSP.
-3. Start it:
+2. Download `MultiKerbal-Server-<version>.zip` from the **MultiKerbal Server** release and unzip it anywhere you like, **not** inside KSP. You get a folder, `MultiKerbal-Server`.
+3. Start it from that folder:
    - **Windows:** double-click `MultiKerbal.Server.exe`. If Windows Firewall asks, allow it.
-   - **Linux / macOS:** run `dotnet MultiKerbal.Server.dll` from that folder.
+   - **Linux / macOS:** run `dotnet MultiKerbal.Server.dll`.
 4. The first run creates `server.json` next to the server. Close the server (type `stop`), set a name and a password in that file if you want them, and start it again. See [Server settings](#server-settings).
 5. Tell the other players the address to use:
    - **Same PC:** `127.0.0.1`
@@ -70,7 +77,7 @@ If your mods do not match the server's, a list shows what is missing before the 
 
 ### Updating and uninstalling
 
-- **Update:** delete the old `GameData/MultiKerbal` folder, then unzip the new version. Update the server at the same time: a server and a mod from different versions may refuse each other.
+- **Update:** delete the old `GameData/MultiKerbal` folder and move the new one in. Update the server at the same time: a server and a mod from different versions may refuse each other. To update the server, replace its files but keep `server.json` and the `Universe` folder.
 - **Uninstall:** delete `GameData/MultiKerbal`. MultiKerbal keeps its local copy of the game in `saves/MultiKerbal` and its settings in `PluginData/MultiKerbal`; you can delete both. Your other saves are never touched.
 
 ## Playing
@@ -136,6 +143,12 @@ With `DeployToKSP=true`, every client build copies the mod into `$(KSPDir)\GameD
 
 ```bash
 dotnet run --project src/MultiKerbal.Server -- --port 6750
+```
+
+To package a release, bump `<Version>` in `Directory.Build.props`, commit, and run the script below. It builds from the last commit (uncommitted changes are left out) and writes both zips to `dist/`: the mod one for the **MultiKerbal** release, the server one for the **MultiKerbal Server** release.
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/Package.ps1
 ```
 
 ### Two players on one PC
