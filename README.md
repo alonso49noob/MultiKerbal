@@ -31,7 +31,7 @@ Everyone, the server included, should use the same version number.
 
 **By hand:**
 
-1. Download `MultiKerbal-<version>-mod.zip`.
+1. Download `MultiKerbal-<version>-mod.zip` from the [Releases page](https://github.com/alonso49noob/MultiKerbal/releases) or from [SpaceDock](https://spacedock.info/mod/4611/MultiKerbal) (same file).
 2. Unzip it. You get a single folder, `MultiKerbal`.
 3. Move that folder into the `GameData` folder of your KSP installation (next to the `Squad` folder):
 
