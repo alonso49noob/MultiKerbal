@@ -7,7 +7,7 @@ namespace MultiKerbal.Client.UI
     internal sealed class ConnectWindow
     {
         private const int WindowId = 0x4D4B0001;
-        private const float Width = 380f;
+        private const float Width = 420f;
         private const float LabelWidth = 90f;
 
         private readonly ClientCore _core;
@@ -90,6 +90,8 @@ namespace MultiKerbal.Client.UI
 
             if (GUILayout.Button("Mods", GUILayout.Width(70f)))
                 _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
+            if (GUILayout.Button(Loc.T("Hospedar", "Host"), GUILayout.Width(LabelWidth)))
+                _core.HostingWindow.Toggle();
             if (GUILayout.Button(Loc.T("Ocultar", "Hide"), GUILayout.Width(LabelWidth)))
                 Visible = false;
             GUILayout.EndHorizontal();
@@ -138,6 +140,16 @@ namespace MultiKerbal.Client.UI
             {
                 _core.SetStatus(Loc.T("Indica la dirección del servidor", "Enter the server address"));
                 return;
+            }
+
+            // "dirección:puerto" pegado de golpe (como lo copia la ventana Hospedar o lo da playit.gg).
+            // Con más de un ':' es una IPv6 y se deja tal cual.
+            int colon = host.IndexOf(':');
+            if (colon > 0 && colon == host.LastIndexOf(':') && int.TryParse(host.Substring(colon + 1), out _))
+            {
+                _port = host.Substring(colon + 1);
+                host = host.Substring(0, colon);
+                _host = host;
             }
 
             if (!int.TryParse(_port.Trim(), out int port) || port < 1 || port > 65535)

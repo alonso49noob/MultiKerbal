@@ -58,6 +58,7 @@ namespace MultiKerbal.Client
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
             ModsWindow = new ModsWindow(this);
+            HostingWindow = new HostingWindow(this);
             HandoverWindow = new HandoverWindow(this);
             _toolbar = new ToolbarButton(SetMultiplayerWindowVisible);
         }
@@ -85,6 +86,8 @@ namespace MultiKerbal.Client
         public MultiplayerWindow MultiplayerWindow { get; }
 
         public ModsWindow ModsWindow { get; }
+
+        public HostingWindow HostingWindow { get; }
 
         /// <summary>Mods del servidor comparados con los de esta instalación (vacío hasta conectarse).</summary>
         public List<ModDifference> ModDifferences { get; private set; } = new List<ModDifference>();
@@ -207,6 +210,7 @@ namespace MultiKerbal.Client
             {
                 ConnectWindow.Draw();
                 ModsWindow.Draw();
+                HostingWindow.Draw();
                 return;
             }
 

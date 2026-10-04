@@ -65,13 +65,13 @@ El mod no necesita otros mods. Solo funciona con KSP 1.12.x.
 5. Pasa a los demás la dirección que deben usar:
    - **Mismo PC:** `127.0.0.1`
    - **Misma red de casa:** tu IP local (en Windows, `ipconfig` → *Dirección IPv4*, p. ej. `192.168.1.20`).
-   - **Por Internet:** tu IP pública, y en el router redirige el puerto **6750**, tanto **TCP como UDP**, al PC del servidor.
+   - **Por Internet:** hay cuatro formas: red local virtual (Tailscale), túnel (playit.gg), abrir el puerto **6750** (TCP y UDP) en el router o un servidor en la nube. El botón **Hospedar** de la ventana MultiKerbal te ayuda con cualquiera de ellas desde el juego, y [docs/HOSTING.es.md](docs/HOSTING.es.md) las explica paso a paso.
 
 El universo se guarda en la carpeta `Universe`, junto al servidor, cada minuto y siempre que lo cierras con `stop` o Ctrl+C. Haz copia de esa carpeta si no quieres perderlo.
 
 ### 3. Conectarse
 
-En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre, la dirección del servidor, el puerto (`6750` si no lo cambiaste) y la contraseña si la hay. Pulsa **Conectar y jugar**.
+En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre, la dirección del servidor (si pegas `dirección:puerto` de una vez, el puerto se rellena solo), el puerto (`6750` si no lo cambiaste) y la contraseña si la hay. Pulsa **Conectar y jugar**.
 
 Si tus mods no coinciden con los del servidor, antes de empezar ves una lista con lo que falta y decides si entrar igualmente.
 

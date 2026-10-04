@@ -65,13 +65,13 @@ The mod needs no other mods. It only works with KSP 1.12.x.
 5. Tell the other players the address to use:
    - **Same PC:** `127.0.0.1`
    - **Same home network:** your local IP (on Windows, `ipconfig` → *IPv4 Address*, e.g. `192.168.1.20`).
-   - **Over the Internet:** your public IP, and on your router forward port **6750** for both **TCP and UDP** to the PC running the server.
+   - **Over the Internet:** there are four ways: a virtual LAN (Tailscale), a tunnel (playit.gg), forwarding port **6750** (TCP and UDP) on your router, or a cloud server. The **Host** button in the MultiKerbal window helps with any of them from inside the game, and [docs/HOSTING.md](docs/HOSTING.md) walks through each one.
 
 The universe is saved in the `Universe` folder next to the server, every minute and whenever you stop it with `stop` or Ctrl+C. Back that folder up if you care about it.
 
 ### 3. Connect
 
-In KSP's main menu, fill in the MultiKerbal window: your name, the server address, the port (`6750` unless you changed it) and the password if there is one. Press **Connect and play**.
+In KSP's main menu, fill in the MultiKerbal window: your name, the server address (paste `address:port` in one go and the port fills itself in), the port (`6750` unless you changed it) and the password if there is one. Press **Connect and play**.
 
 If your mods do not match the server's, a list shows what is missing before the game starts, and you choose whether to join anyway.
 

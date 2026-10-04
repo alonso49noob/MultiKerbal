@@ -14,6 +14,9 @@ namespace MultiKerbal.Client
         public string Host = "127.0.0.1";
         public int Port = ProtocolInfo.DefaultPort;
 
+        /// <summary>La dirección que dio playit.gg al hospedar, para no tener que buscarla cada vez.</summary>
+        public string TunnelAddress = string.Empty;
+
         /// <summary>Idioma del mod: "auto" (el de KSP), "es" o "en".</summary>
         public string Language = "auto";
 
@@ -49,6 +52,8 @@ namespace MultiKerbal.Client
                 if (int.TryParse(node.GetValue("port"), out int port) && port > 0 && port <= 65535)
                     settings.Port = port;
 
+                settings.TunnelAddress = node.GetValue("tunnelAddress") ?? string.Empty;
+
                 if (Enum.TryParse(node.GetValue("defaultAccess"), out VesselAccess access) && VesselPermissions.IsValid(access))
                     settings.DefaultAccess = access;
 
@@ -82,6 +87,7 @@ namespace MultiKerbal.Client
                 node.AddValue("playerName", PlayerName);
                 node.AddValue("host", Host);
                 node.AddValue("port", Port.ToString());
+                node.AddValue("tunnelAddress", TunnelAddress);
                 node.AddValue("defaultAccess", DefaultAccess.ToString());
                 node.AddValue("language", Language);
                 SaveWarp(node.AddNode("WARP_POLICY"), Warp);
