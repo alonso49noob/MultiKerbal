@@ -95,6 +95,15 @@ namespace MultiKerbal.Common.Serialization
             WriteRaw(value, 0, value.Length);
         }
 
+        /// <summary>Número de elementos (int32) seguido de cada texto. Null se escribe como lista vacía.</summary>
+        public void WriteStrings(string[] values)
+        {
+            values = values ?? new string[0];
+            WriteInt32(values.Length);
+            foreach (string value in values)
+                WriteString(value);
+        }
+
         public void WriteRaw(byte[] source, int offset, int count)
         {
             Reserve(count);

@@ -6,17 +6,20 @@ namespace MultiKerbal.Tests;
 public class VesselPermissionsTests
 {
     [Theory]
-    // dueño, acceso, jugador, pilotar, recuperar/borrar, cambiar propiedad
-    [InlineData("Jeb", VesselAccess.Private, "Jeb", true, true, true)]
-    [InlineData("Jeb", VesselAccess.Private, "jeb", true, true, true)]
-    [InlineData("Jeb", VesselAccess.Private, "Bill", false, false, false)]
-    [InlineData("Jeb", VesselAccess.Shared, "Bill", true, false, false)]
-    [InlineData("Jeb", VesselAccess.Public, "Bill", true, true, false)]
-    [InlineData("", VesselAccess.Private, "Bill", true, true, true)]
-    [InlineData(null, VesselAccess.Shared, "Bill", true, true, true)]
-    public void Rules(string? owner, VesselAccess access, string player, bool pilot, bool remove, bool change)
+    // dueño, acceso, prestada a, jugador, pilotar, recuperar/borrar, cambiar propiedad
+    [InlineData("Jeb", VesselAccess.Private, null, "Jeb", true, true, true)]
+    [InlineData("Jeb", VesselAccess.Private, null, "jeb", true, true, true)]
+    [InlineData("Jeb", VesselAccess.Private, null, "Bill", false, false, false)]
+    [InlineData("Jeb", VesselAccess.Shared, null, "Bill", true, false, false)]
+    [InlineData("Jeb", VesselAccess.Public, null, "Bill", true, true, false)]
+    [InlineData("", VesselAccess.Private, null, "Bill", true, true, true)]
+    [InlineData(null, VesselAccess.Shared, null, "Bill", true, true, true)]
+    // Prestada: quien la tiene puede pilotarla aunque sea privada, pero no destruirla ni regalarla.
+    [InlineData("Jeb", VesselAccess.Private, "Bill", "bill", true, false, false)]
+    [InlineData("Jeb", VesselAccess.Private, "Bill", "Val", false, false, false)]
+    public void Rules(string? owner, VesselAccess access, string? lentTo, string player, bool pilot, bool remove, bool change)
     {
-        Assert.Equal(pilot, VesselPermissions.CanPilot(owner!, access, player));
+        Assert.Equal(pilot, VesselPermissions.CanPilot(owner!, access, lentTo!, player));
         Assert.Equal(remove, VesselPermissions.CanRemove(owner!, access, player));
         Assert.Equal(change, VesselPermissions.CanChangeOwnership(owner!, player));
     }
@@ -112,7 +115,7 @@ public sealed class VesselOwnershipTests : IDisposable
     }
 
     [Fact]
-    public void PilotCanLoseASharedVessel()
+    public void DestroyingSomeoneElsesVessel_BringsItBackWhereItWasTaken()
     {
         TestClient jeb = _server.Join("Jeb");
         TestClient bill = _server.Join("Bill");
@@ -121,9 +124,117 @@ public sealed class VesselOwnershipTests : IDisposable
         bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
         jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
 
-        // Choque con Bill a los mandos: la nave desaparece aunque no sea suya.
-        bill.Send(new VesselRemoveMessage { VesselId = VesselId });
-        jeb.WaitFor<VesselRemoveMessage>();
+        // Bill la daña (pierde piezas) y luego la estrella.
+        bill.Send(Proto(VesselAccess.Shared, 6, 6));
+        jeb.WaitFor<VesselProtoMessage>(m => m.Data.Length == 2);
+        bill.Send(new VesselRemoveMessage { VesselId = VesselId, Reason = VesselRemoveReason.Destroyed });
+
+        // No desaparece: vuelve a como estaba cuando Bill la tomó, sin piloto, y todos la recargan.
+        VesselProtoMessage restored = jeb.WaitFor<VesselProtoMessage>(m => m.Data.Length == 1);
+        Assert.Equal(0, restored.ControllerId);
+        Assert.Equal(new byte[] { 1 }, bill.WaitFor<VesselProtoMessage>(m => m.Data.Length == 1).Data);
+        Assert.Contains("Jeb", bill.WaitFor<ChatMessage>(m => m.SenderId == ChatMessage.SystemSenderId && m.Text.Contains("Estación")).Text);
+        Assert.Empty(jeb.Received<VesselRemoveMessage>());
+    }
+
+    [Fact]
+    public void Pilot_CannotRecoverSomeoneElsesVessel_ButOwnerCanDestroyTheirs()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        int billId = bill.Welcome!.PlayerId;
+        PublishAndRelease(jeb, bill, VesselAccess.Shared);
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
+
+        // Recuperarla no vale: se queda donde estaba (posada), sin piloto.
+        bill.Send(new VesselRemoveMessage { VesselId = VesselId, Reason = VesselRemoveReason.Recovered });
+        Assert.Equal(0, bill.WaitFor<VesselProtoMessage>().ControllerId);
+        jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
+
+        jeb.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == jeb.Welcome!.PlayerId);
+        jeb.Send(new VesselRemoveMessage { VesselId = VesselId, Reason = VesselRemoveReason.Destroyed });
+        Assert.Equal(VesselRemoveReason.Destroyed, bill.WaitFor<VesselRemoveMessage>().Reason);
+    }
+
+    [Fact]
+    public void Pilot_CanMergeSomeoneElsesVessel_ByDocking()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        int billId = bill.Welcome!.PlayerId;
+        PublishAndRelease(jeb, bill, VesselAccess.Shared);
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
+
+        bill.Send(new VesselRemoveMessage { VesselId = VesselId, Reason = VesselRemoveReason.Merged });
+        Assert.Equal(VesselRemoveReason.Merged, jeb.WaitFor<VesselRemoveMessage>().Reason);
+    }
+
+    [Fact]
+    public void LentVessel_BorrowerFliesItEvenIfPrivate_UntilOwnerTakesItBack()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        TestClient val = _server.Join("Val");
+        int billId = bill.Welcome!.PlayerId;
+        jeb.Send(Proto(VesselAccess.Private));
+        bill.WaitFor<VesselProtoMessage>();
+        val.WaitFor<VesselProtoMessage>();
+        jeb.WaitFor<VesselOwnerMessage>();
+        jeb.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = false });
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
+
+        // Solo el dueño presta.
+        val.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = "Val" });
+        Assert.Equal(string.Empty, val.WaitFor<VesselOwnerMessage>().LentTo ?? string.Empty);
+
+        jeb.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = "bill" });
+        Assert.Equal("Bill", val.WaitFor<VesselOwnerMessage>(m => !string.IsNullOrEmpty(m.LentTo)).LentTo);
+
+        // Bill puede pilotarla aunque sea privada; Val no.
+        val.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        Assert.Equal(0, val.WaitFor<VesselControlMessage>().ControllerId);
+        bill.Send(new VesselControlRequestMessage { VesselId = VesselId, Acquire = true });
+        jeb.WaitFor<VesselControlMessage>(m => m.ControllerId == billId);
+
+        // Jeb la recupera: Bill deja de pilotarla.
+        jeb.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = string.Empty });
+        bill.WaitFor<VesselOwnerMessage>(m => string.IsNullOrEmpty(m.LentTo));
+        bill.WaitFor<VesselControlMessage>(m => m.ControllerId == 0);
+    }
+
+    [Fact]
+    public void Borrower_CanGiveItBack_ButNotLendItToSomeoneElse()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        _server.Join("Val");
+        PublishAndRelease(jeb, bill, VesselAccess.Private);
+        jeb.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = "Bill" });
+        bill.WaitFor<VesselOwnerMessage>(m => m.LentTo == "Bill");
+
+        bill.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = "Val" });
+        Assert.Equal("Bill", bill.WaitFor<VesselOwnerMessage>().LentTo);
+
+        bill.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = string.Empty });
+        Assert.True(string.IsNullOrEmpty(jeb.WaitFor<VesselOwnerMessage>(m => string.IsNullOrEmpty(m.LentTo)).LentTo));
+    }
+
+    [Fact]
+    public void GivingTheVesselAway_EndsTheLoan()
+    {
+        TestClient jeb = _server.Join("Jeb");
+        TestClient bill = _server.Join("Bill");
+        _server.Join("Val");
+        PublishAndRelease(jeb, bill, VesselAccess.Private);
+        jeb.Send(new VesselLendRequestMessage { VesselId = VesselId, PlayerName = "Bill" });
+        bill.WaitFor<VesselOwnerMessage>(m => m.LentTo == "Bill");
+
+        jeb.Send(new VesselOwnerRequestMessage { VesselId = VesselId, OwnerName = "Val", Access = VesselAccess.Private });
+        VesselOwnerMessage gifted = bill.WaitFor<VesselOwnerMessage>(m => m.OwnerName == "Val");
+        Assert.True(string.IsNullOrEmpty(gifted.LentTo));
     }
 
     [Fact]

@@ -1,6 +1,8 @@
 using MultiKerbal.Common;
 using MultiKerbal.Common.Mods;
+using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Time;
+using MultiKerbal.Server.Persistence;
 
 namespace MultiKerbal.Server;
 
@@ -20,7 +22,7 @@ public sealed partial class ServerHost
         {
             case "help":
             case "ayuda":
-                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
+                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | account [delete <jugador>] | progress | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
                 break;
 
             case "vessels":
@@ -76,6 +78,18 @@ public sealed partial class ServerHost
             case "save":
                 SaveUniverse();
                 Log.Info("Universo guardado");
+                break;
+
+            case "account":
+            case "accounts":
+            case "cuenta":
+            case "cuentas":
+                AccountCommand(arguments);
+                break;
+
+            case "progress":
+            case "progreso":
+                ShowProgress();
                 break;
 
             case "stop":
@@ -142,6 +156,50 @@ public sealed partial class ServerHost
             default:
                 return difference.Name;
         }
+    }
+
+    /// <summary>
+    /// <c>account</c> lista las cuentas; <c>account delete &lt;jugador&gt;</c> borra una (por ejemplo, si olvidó la
+    /// contraseña): la próxima vez que entre con ese nombre, la contraseña que use será la nueva.
+    /// </summary>
+    private void AccountCommand(string arguments)
+    {
+        string[] words = arguments.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+        {
+            Log.Info($"{_accounts.Count} cuenta(s):");
+            foreach (Account account in _accounts.All.OrderBy(a => a.Name))
+                Log.Info($"  {account.Name} — creada {account.Created:yyyy-MM-dd}, última entrada {account.LastLogin:yyyy-MM-dd HH:mm} UTC");
+            return;
+        }
+
+        if (words.Length < 2 || words[0].ToLowerInvariant() is not ("delete" or "borrar"))
+        {
+            Log.Info("Uso: account | account delete <jugador>");
+            return;
+        }
+
+        string name = words[1].Trim();
+        if (FindPlayer(name) is { } connected)
+        {
+            Log.Info($"{connected.Name} está conectado: expúlsalo antes de borrar su cuenta");
+            return;
+        }
+
+        Log.Info(_accounts.Delete(name)
+            ? $"Cuenta de {name} borrada: la próxima vez que entre elegirá contraseña nueva"
+            : $"No hay ninguna cuenta llamada \"{name}\"");
+    }
+
+    private void ShowProgress()
+    {
+        if (_progress.Mode == GameMode.Sandbox)
+        {
+            Log.Info("Partida sandbox: no hay progreso compartido (GameMode en server.json)");
+            return;
+        }
+
+        Log.Info($"Partida {GameModes.Describe(_progress.Mode)}: fondos {_progress.Funds:N0}, ciencia {_progress.Science:0.#}, reputación {_progress.Reputation:0.#}, {_progress.Techs.Count} tecnología(s)");
     }
 
     private Player? FindPlayer(string name) =>

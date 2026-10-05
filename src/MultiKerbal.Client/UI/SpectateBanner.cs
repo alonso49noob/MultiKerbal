@@ -10,6 +10,9 @@ namespace MultiKerbal.Client.UI
         private const float Width = 470f;
         private const float Height = 62f;
 
+        /// <summary>Una línea más cuando se mira y se copilota a la vez (el copiloto lejano mira la nave que copilota).</summary>
+        private const float ExtraLineHeight = 24f;
+
         public static void Draw(ClientCore core)
         {
             TrackedVessel spectated = core.Vessels.Find(core.Vessels.SpectatingId);
@@ -18,7 +21,8 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
-            GUILayout.BeginArea(new Rect((Screen.width - Width) / 2f, 60f, Width, Height), GUI.skin.box);
+            float height = spectated != null && copiloted != null ? Height + ExtraLineHeight : Height;
+            GUILayout.BeginArea(new Rect((Screen.width - Width) / 2f, 60f, Width, height), GUI.skin.box);
 
             if (spectated != null)
             {

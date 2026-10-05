@@ -22,19 +22,27 @@ namespace MultiKerbal.Client.Vessels
     {
         private const double SceneSettleSeconds = 1.0;
         private const double ScanIntervalSeconds = 1.0;
-        private const double PhysicsUpdateIntervalSeconds = 0.1;
+        /// <summary>
+        /// 30 Hz. KSP simula la física a 50 Hz, así que 60 repetiría estados y doblaría el tráfico; los saltos entre
+        /// estados los quita <see cref="PuppetMotion"/> en quien los recibe.
+        /// </summary>
+        private const double PhysicsUpdateIntervalSeconds = 1.0 / 30.0;
         private const double RailsUpdateIntervalSeconds = 5.0;
         private const double ProtoRefreshSeconds = 30.0;
         private const double RespawnRetrySeconds = 10.0;
         private const float NoticeSeconds = 5f;
+        private const double MergeMemorySeconds = 2.0;
+        private const double AwaitLevelTimeoutSeconds = 60.0;
 
         /// <summary>KSP carga las naves a 2,5 km: el control se pide algo antes para que llegue a tiempo.</summary>
         private const double TakeoverDistance = 2200.0;
 
         private const string SpectateLockId = "MultiKerbalSpectate";
 
+        /// <summary>Mandos de la nave y cambio de nave ([ ] o el mapa): para salir está "Dejar de mirar".</summary>
         private const ControlTypes SpectateLocks =
-            ControlTypes.ALL_SHIP_CONTROLS | ControlTypes.STAGING | ControlTypes.CUSTOM_ACTION_GROUPS | ControlTypes.ACTIONS_SHIP;
+            ControlTypes.ALL_SHIP_CONTROLS | ControlTypes.STAGING | ControlTypes.CUSTOM_ACTION_GROUPS | ControlTypes.ACTIONS_SHIP
+            | ControlTypes.VESSEL_SWITCHING;
 
         private readonly Func<int> _localPlayerId;
         private readonly Func<string> _localPlayerName;
@@ -43,6 +51,9 @@ namespace MultiKerbal.Client.Vessels
         private readonly Action<IMessage, Delivery> _send;
         private readonly Dictionary<Guid, TrackedVessel> _tracked = new Dictionary<Guid, TrackedVessel>();
         private readonly HashSet<Guid> _removed = new HashSet<Guid>();
+
+        /// <summary>Naves que acaban de fundirse con otra (hasta cuándo se recuerda): su destrucción no es un choque.</summary>
+        private readonly Dictionary<Guid, double> _merging = new Dictionary<Guid, double>();
         private readonly List<TrackedVessel> _scratch = new List<TrackedVessel>();
 
         private GameScenes _scene = GameScenes.LOADING;
@@ -55,6 +66,20 @@ namespace MultiKerbal.Client.Vessels
         private bool _eventsRegistered;
         private Guid _guardedVessel;
         private bool _guardBlockedButtons;
+
+        /// <summary>Adónde volver al dejar de mirar: la nave que pilotábamos (vacío si ninguna) o, si no, esta escena.</summary>
+        private Guid _returnVesselId;
+        private GameScenes _returnScene = GameScenes.SPACECENTER;
+
+        /// <summary>La última nave que se miró: nunca se "vuelve" a ella.</summary>
+        private Guid _lastSpectatedId;
+
+        /// <summary>Se pulsó "Dejar de mirar" mientras cargaba el vuelo: se hace al terminar.</summary>
+        private bool _stopWhenLoaded;
+
+        /// <summary>Se pidió otra escena y KSP aún no ha terminado de cargarla.</summary>
+        private bool _awaitingLevel;
+        private double _loadRequestedAt;
 
         public VesselSyncSystem(
             Func<int> localPlayerId,
@@ -86,14 +111,30 @@ namespace MultiKerbal.Client.Vessels
         public bool IsPilotedByOther(TrackedVessel tracked) => tracked.ControllerId != 0 && !IsLocal(tracked);
 
         public bool CanPilot(TrackedVessel tracked) =>
-            !IsPilotedByOther(tracked) && VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, _localPlayerName());
+            !IsPilotedByOther(tracked) && HasPilotPermission(tracked);
 
+        /// <summary>Destruirla, recuperarla o borrarla: hace falta permiso del dueño aunque la pilotemos.</summary>
         public bool CanRemove(TrackedVessel tracked) =>
-            IsLocal(tracked)
-            || (tracked.ControllerId == 0 && VesselPermissions.CanRemove(tracked.OwnerName, tracked.Access, _localPlayerName()));
+            (IsLocal(tracked) || tracked.ControllerId == 0) && HasRemovePermission(tracked);
 
         public bool CanChangeOwnership(TrackedVessel tracked) =>
             VesselPermissions.CanChangeOwnership(tracked.OwnerName, _localPlayerName());
+
+        /// <summary>Nos la han prestado.</summary>
+        public bool IsLentToMe(TrackedVessel tracked) => VesselPermissions.IsBorrower(tracked.LentTo, _localPlayerName());
+
+        /// <summary>
+        /// El dueño la presta a un jugador conectado o la recupera (nombre vacío); quien la tiene prestada la devuelve
+        /// (nombre vacío). El servidor decide y avisa a todos.
+        /// </summary>
+        public void RequestLend(TrackedVessel tracked, string playerName) =>
+            _send(new VesselLendRequestMessage { VesselId = tracked.Id, PlayerName = playerName ?? string.Empty }, Delivery.Reliable);
+
+        private bool HasPilotPermission(TrackedVessel tracked) =>
+            VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, tracked.LentTo, _localPlayerName());
+
+        private bool HasRemovePermission(TrackedVessel tracked) =>
+            VesselPermissions.CanRemove(tracked.OwnerName, tracked.Access, _localPlayerName());
 
         /// <summary>Nave que estamos mirando sin pilotarla (vacío si ninguna).</summary>
         public Guid SpectatingId { get; private set; }
@@ -101,48 +142,278 @@ namespace MultiKerbal.Client.Vessels
         public bool IsSpectating(Vessel vessel) => vessel != null && SpectatingId != Guid.Empty && vessel.id == SpectatingId;
 
         /// <summary>
-        /// Mirar una nave que pilota otro jugador, con los mandos bloqueados. Solo funciona si está cargada
-        /// (a menos de 2,5 km): más lejos KSP tendría que recargar la escena alrededor de ella.
+        /// Mirar una nave ajena, con los mandos bloqueados, desde cualquier sitio. Si está cargada cerca basta con
+        /// cambiar la cámara; si no, se carga el vuelo alrededor de ella, como "Volar" en la estación de seguimiento.
+        /// Al dejar de mirar se vuelve a la nave o a la escena de antes.
         /// </summary>
         public bool BeginSpectate(TrackedVessel tracked, out string error)
         {
-            Vessel vessel = LiveVessel(tracked);
-            if (HighLogic.LoadedScene != GameScenes.FLIGHT || vessel == null || !vessel.loaded)
+            if (IsLocal(tracked))
             {
-                error = Loc.T(
-                    "Solo puedes mirarla si estás volando a menos de 2,5 km de ella",
-                    "You can only watch it while flying within 2.5 km of it");
+                error = Loc.T("Esa nave ya la pilotas tú", "You are already flying that vessel");
                 return false;
             }
 
-            if (vessel == FlightGlobals.ActiveVessel || FlightGlobals.SetActiveVessel(vessel))
+            Vessel vessel = LiveVessel(tracked);
+            if (HighLogic.LoadedScene == GameScenes.FLIGHT && vessel != null && vessel.loaded)
             {
-                SpectatingId = tracked.Id;
-                InputLockManager.SetControlLock(SpectateLocks, SpectateLockId);
-                error = null;
-                ClientLog.Info($"Mirando \"{tracked.Name}\"");
-                return true;
+                bool wasSpectating = SpectatingId != Guid.Empty;
+                if (!wasSpectating)
+                    RememberWhereToReturn();
+
+                // Mirando ya, la nave activa es una copia que no se simula aquí: no hace falta que KSP compruebe si se puede cambiar.
+                bool switched = vessel == FlightGlobals.ActiveVessel
+                                || (wasSpectating ? FlightGlobals.ForceSetActiveVessel(vessel) : FlightGlobals.SetActiveVessel(vessel));
+                if (switched)
+                {
+                    SpectatingId = tracked.Id;
+                    InputLockManager.SetControlLock(SpectateLocks, SpectateLockId);
+                    error = null;
+                    ClientLog.Info($"Mirando \"{tracked.Name}\"");
+                    return true;
+                }
+
+                if (!wasSpectating)
+                    ForgetReturn();
+                error = Loc.T("KSP no ha dejado cambiar la cámara a esa nave", "KSP would not move the camera to that vessel");
+                return false;
             }
 
-            error = Loc.T("KSP no ha dejado cambiar la cámara a esa nave", "KSP would not move the camera to that vessel");
-            return false;
+            return FlyToSpectate(tracked, false, out error);
         }
 
-        /// <summary>Deja de mirar y vuelve a una nave propia (o al Centro Espacial si no hay ninguna).</summary>
+        /// <summary>Deja de mirar y vuelve a la nave o la escena de antes (o al Centro Espacial si ya no está).</summary>
         public void StopSpectate()
         {
             if (SpectatingId == Guid.Empty)
                 return;
 
-            Guid spectated = SpectatingId;
-            SpectatingId = Guid.Empty;
-            InputLockManager.RemoveControlLock(SpectateLockId);
+            // Aún cargando el vuelo alrededor de la nave: se deja para cuando termine (si no, se quedaría pilotando la copia).
+            if (HighLogic.LoadedScene == GameScenes.FLIGHT && !_reconciled)
+            {
+                _stopWhenLoaded = true;
+                return;
+            }
 
-            // Si mientras mirábamos nos dieron el control, nos quedamos en ella.
+            Guid spectated = SpectatingId;
+            ClearSpectate();
+
+            // Si mientras mirábamos nos dieron el control, nos quedamos en ella (y deja de ser marioneta).
             Vessel active = FlightGlobals.ActiveVessel;
             bool nowMine = _tracked.TryGetValue(spectated, out TrackedVessel tracked) && IsLocal(tracked);
+            if (active != null && active.id == spectated && nowMine)
+                VesselState.ReleasePuppet(active);
+
             if (active != null && active.id == spectated && !nowMine)
                 ReturnToOwnVessel();
+            else
+                ForgetReturn();
+        }
+
+        private void ClearSpectate()
+        {
+            if (SpectatingId != Guid.Empty)
+                _lastSpectatedId = SpectatingId;
+            SpectatingId = Guid.Empty;
+            _stopWhenLoaded = false;
+            InputLockManager.RemoveControlLock(SpectateLockId);
+        }
+
+        /// <summary>Antes de empezar a mirar: la nave que pilotábamos (si estábamos volando) y la escena.</summary>
+        private void RememberWhereToReturn()
+        {
+            Vessel active = HighLogic.LoadedScene == GameScenes.FLIGHT ? FlightGlobals.ActiveVessel : null;
+            _returnVesselId = active != null ? active.id : Guid.Empty;
+            _returnScene = HighLogic.LoadedScene == GameScenes.TRACKSTATION ? GameScenes.TRACKSTATION : GameScenes.SPACECENTER;
+        }
+
+        private void ForgetReturn()
+        {
+            _returnVesselId = Guid.Empty;
+            _returnScene = GameScenes.SPACECENTER;
+        }
+
+        /// <summary>
+        /// Una nave a la que se puede volver: propia (o que se puede pilotar) y que no sea la que se estaba mirando
+        /// (volver a ella sería tomarla sin pedirlo, o rebotar entre dos naves ajenas).
+        /// </summary>
+        private bool CanReturnTo(Guid id)
+        {
+            if (id == Guid.Empty || id == SpectatingId || id == _lastSpectatedId)
+                return false;
+
+            TrackedVessel tracked = Find(id);
+            return tracked == null || IsLocal(tracked) || CanPilot(tracked);
+        }
+
+        /// <summary>
+        /// La nave que pilotamos se quedará sin cargar: tiene que poder quedarse sola. Posada y quieta, o en órbita.
+        /// Una suborbital se estrellaría sobre raíles (y se borraría para todos); en la atmósfera KSP la destruye.
+        /// </summary>
+        private static bool CanBeLeftAlone(Vessel vessel)
+        {
+            switch (vessel.situation)
+            {
+                case Vessel.Situations.LANDED:
+                case Vessel.Situations.SPLASHED:
+                case Vessel.Situations.PRELAUNCH:
+                    return vessel.srfSpeed < 1.0;
+                case Vessel.Situations.ORBITING:
+                case Vessel.Situations.ESCAPING:
+                case Vessel.Situations.DOCKED:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Carga el vuelo alrededor de una nave ajena para mirarla. Se parte de la partida actual con la nave puesta al día
+        /// (definición y último estado), porque puede que aquí ni exista: fuera del vuelo no se crean las que vuelan en la atmósfera.
+        /// </summary>
+        /// <param name="reload">Ya se la está mirando y ha cambiado su estructura (no se vuelve a comprobar la nave propia).</param>
+        private bool FlyToSpectate(TrackedVessel tracked, bool reload, out string error)
+        {
+            GameScenes scene = HighLogic.LoadedScene;
+            if (scene != GameScenes.FLIGHT && scene != GameScenes.SPACECENTER && scene != GameScenes.TRACKSTATION)
+            {
+                error = Loc.T("Sal del hangar para mirar otras naves", "Leave the editor to watch other vessels");
+                return false;
+            }
+
+            if (!IsLiveScene() || !_reconciled)
+            {
+                error = Loc.T("Espera a que termine de cargar la escena", "Wait for the scene to finish loading");
+                return false;
+            }
+
+            if (tracked.Proto == null || tracked.LastUpdate == null)
+            {
+                error = Loc.T("Aún no se sabe dónde está esa nave", "That vessel's position is not known yet");
+                return false;
+            }
+
+            if (scene == GameScenes.FLIGHT && !reload && !CanLeaveOwnVessel())
+            {
+                error = Loc.T(
+                    "Para mirar una nave lejana, deja antes la tuya estable: posada y quieta, o en órbita con los motores apagados",
+                    "To watch a distant vessel, first leave yours stable: landed and still, or in orbit with the engines off");
+                return false;
+            }
+
+            Game game = HighLogic.CurrentGame.Updated();
+            ProtoVessel proto;
+            try
+            {
+                proto = VesselSpawner.CreateProto(VesselCodec.Decode(tracked.Proto), game, out error);
+            }
+            catch (Exception ex)
+            {
+                ClientLog.Error($"No se pudo preparar la nave {tracked.Name} para mirarla: {ex}");
+                error = ex.Message;
+                proto = null;
+            }
+
+            if (proto == null)
+            {
+                error = Loc.T($"No se pudo cargar \"{tracked.Name}\": {error}", $"Could not load \"{tracked.Name}\": {error}");
+                return false;
+            }
+
+            VesselState.PlaceProto(proto, tracked.LastUpdate);
+            List<ProtoVessel> protos = game.flightState.protoVessels;
+            int index = protos.FindIndex(p => p.vesselID == tracked.Id);
+            if (index >= 0)
+            {
+                protos[index] = proto;
+            }
+            else
+            {
+                protos.Add(proto);
+                index = protos.Count - 1;
+            }
+
+            if (SpectatingId == Guid.Empty)
+                RememberWhereToReturn();
+
+            // Así, al entrar en el vuelo, la copia que KSP crea desde la partida se adopta como marioneta en vez de recargarla.
+            tracked.SpawnedVersion = tracked.ProtoVersion;
+            tracked.SavedVersion = tracked.ProtoVersion;
+            SpectatingId = tracked.Id;
+            ClientLog.Info($"Cargando el vuelo para mirar \"{tracked.Name}\"");
+            FlyTo(game, index);
+            error = null;
+            return true;
+        }
+
+        /// <summary>
+        /// La nave propia a la que se volverá (la activa si aún no se mira nada) puede quedarse sin cargar. KSP pide además
+        /// lo mismo que para guardar o cambiar de nave: nada de acelerar ni de estar a punto de estrellarse.
+        /// </summary>
+        private bool CanLeaveOwnVessel()
+        {
+            bool spectating = SpectatingId != Guid.Empty;
+            Vessel own = spectating
+                ? (_returnVesselId == Guid.Empty ? null : FlightGlobals.FindVessel(_returnVesselId))
+                : FlightGlobals.ActiveVessel;
+            if (own == null || !own.loaded)
+                return true;
+
+            if (!spectating && FlightGlobals.ClearToSave() != ClearToSaveStatus.CLEAR)
+                return false;
+
+            return CanBeLeftAlone(own);
+        }
+
+        private static void FlyTo(Game game, int vesselIndex)
+        {
+            GamePersistence.SaveGame(game, "persistent", HighLogic.SaveFolder, SaveMode.OVERWRITE);
+            FlightDriver.StartAndFocusVessel(game, vesselIndex);
+        }
+
+        /// <summary>
+        /// La nave mirada no se simula aquí: la mueve la red. KSP saca de raíles a la nave activa sin mirar sus distancias
+        /// de carga (en cada LateUpdate), así que se retiene en cada frame, desde el primero tras cargar el vuelo.
+        /// Si nos la ceden mientras tanto, se deja de retener: entonces la simulamos nosotros.
+        /// </summary>
+        private void HoldSpectatedVessel()
+        {
+            if (SpectatingId == Guid.Empty || HighLogic.LoadedScene != GameScenes.FLIGHT || FlightGlobals.fetch == null)
+                return;
+
+            Vessel active = FlightGlobals.ActiveVessel;
+            if (active == null || active.id != SpectatingId)
+                return;
+
+            TrackedVessel tracked = Find(SpectatingId);
+            if (tracked != null && IsLocal(tracked))
+                return;
+
+            InputLockManager.SetControlLock(SpectateLocks, SpectateLockId);
+            OrbitPhysicsManager.HoldVesselUnpack(2);
+            if (!_reconciled)
+                VesselState.MakePuppet(active);
+            else if (!active.packed && FlightGlobals.ready)
+                active.GoOnRails();
+        }
+
+        /// <summary>
+        /// Al pedir otra escena (también al recargar el vuelo desde el vuelo, que no cambia HighLogic.LoadedScene) se da
+        /// por terminada la actual. Hasta que KSP termine de cargar la nueva no se toca nada.
+        /// </summary>
+        private void OnSceneLoadRequested(GameScenes scene)
+        {
+            double now = LocalClock.Now;
+            OnSceneChanged(GameScenes.LOADING, now);
+            _awaitingLevel = true;
+            _loadRequestedAt = now;
+        }
+
+        /// <summary>La escena nueva ya está: el segundo de espera antes de reconciliar cuenta desde aquí.</summary>
+        private void OnLevelWasLoaded(GameScenes scene)
+        {
+            _awaitingLevel = false;
+            _sceneEnteredAt = LocalClock.Now;
         }
 
         /// <summary>Pide a quien la pilota que nos ceda el control (por ejemplo, para acoplarse).</summary>
@@ -180,6 +451,10 @@ namespace MultiKerbal.Client.Vessels
             GameEvents.onVesselTerminated.Add(OnVesselTerminated);
             GameEvents.onDockingComplete.Add(OnDockingComplete);
             GameEvents.onVesselsUndocking.Add(OnVesselsUndocking);
+            GameEvents.onPartCouple.Add(OnPartCouple);
+            GameEvents.onCrewBoardVessel.Add(OnPartCouple);
+            GameEvents.onGameSceneLoadRequested.Add(OnSceneLoadRequested);
+            GameEvents.onLevelWasLoaded.Add(OnLevelWasLoaded);
         }
 
         public void UnregisterEvents()
@@ -193,13 +468,21 @@ namespace MultiKerbal.Client.Vessels
             GameEvents.onVesselTerminated.Remove(OnVesselTerminated);
             GameEvents.onDockingComplete.Remove(OnDockingComplete);
             GameEvents.onVesselsUndocking.Remove(OnVesselsUndocking);
+            GameEvents.onPartCouple.Remove(OnPartCouple);
+            GameEvents.onCrewBoardVessel.Remove(OnPartCouple);
+            GameEvents.onGameSceneLoadRequested.Remove(OnSceneLoadRequested);
+            GameEvents.onLevelWasLoaded.Remove(OnLevelWasLoaded);
         }
 
         public void Reset()
         {
-            StopSpectate();
+            // Sin volver a ninguna nave: al desconectarse se va al menú principal.
+            ClearSpectate();
+            ForgetReturn();
+            _lastSpectatedId = Guid.Empty;
             _tracked.Clear();
             _removed.Clear();
+            _merging.Clear();
             _reconciled = false;
             _activeVesselId = Guid.Empty;
             _previousActiveVesselId = Guid.Empty;
@@ -224,6 +507,9 @@ namespace MultiKerbal.Client.Vessels
                 case VesselOwnerMessage owner:
                     OnOwner(owner);
                     break;
+                case VesselRejectMessage reject:
+                    OnReject(reject);
+                    break;
             }
         }
 
@@ -235,7 +521,12 @@ namespace MultiKerbal.Client.Vessels
                 OnSceneChanged(scene, now);
 
             SuppressSpaceObjects();
-            if (!IsLiveScene() || now - _sceneEnteredAt < SceneSettleSeconds)
+            HoldSpectatedVessel();
+
+            // Si KSP no avisara de que terminó de cargar, no se queda parado para siempre.
+            if (_awaitingLevel && now - _loadRequestedAt > AwaitLevelTimeoutSeconds)
+                _awaitingLevel = false;
+            if (_awaitingLevel || !IsLiveScene() || now - _sceneEnteredAt < SceneSettleSeconds)
                 return;
 
             if (!_reconciled)
@@ -244,6 +535,9 @@ namespace MultiKerbal.Client.Vessels
                 _reconciled = true;
                 _nextScan = 0;
             }
+
+            if (_stopWhenLoaded)
+                StopSpectate();
 
             if (now >= _nextScan)
             {
@@ -259,18 +553,43 @@ namespace MultiKerbal.Client.Vessels
             GuardTrackingStationButtons();
             TrackActiveVessel();
             SendLocalUpdates(now);
-            PositionPuppets();
+            PositionPuppets(now);
         }
 
-        /// <summary>Se deja de mirar si la nave desaparece, si cambiamos de escena o si pasa a ser nuestra.</summary>
+        /// <summary>
+        /// Se deja de mirar si la nave pasa a ser nuestra (nos quedamos en ella), si salimos del vuelo, o si la nave
+        /// desaparece o KSP cambia de nave (entonces se vuelve a la propia, salvo que la nueva activa ya lo sea).
+        /// </summary>
         private void CheckSpectate()
         {
             if (SpectatingId == Guid.Empty)
                 return;
 
             TrackedVessel tracked = Find(SpectatingId);
-            if (tracked == null || IsLocal(tracked) || LiveVessel(tracked) == null || HighLogic.LoadedScene != GameScenes.FLIGHT)
+            if (tracked != null && IsLocal(tracked))
+            {
                 StopSpectate();
+                return;
+            }
+
+            if (HighLogic.LoadedScene != GameScenes.FLIGHT)
+            {
+                ClearSpectate();
+                ForgetReturn();
+                return;
+            }
+
+            Vessel active = FlightGlobals.ActiveVessel;
+            if (tracked != null && LiveVessel(tracked) != null && (active == null || active.id == SpectatingId))
+                return;
+
+            ClearSpectate();
+            TrackedVessel activeTracked = active != null ? Find(active.id) : null;
+            bool activeIsOurs = active != null && active.id != _lastSpectatedId && (activeTracked == null || IsLocal(activeTracked));
+            if (activeIsOurs)
+                ForgetReturn();
+            else
+                ReturnToOwnVessel();
         }
 
         private static bool IsLiveScene()
@@ -375,6 +694,7 @@ namespace MultiKerbal.Client.Vessels
             tracked.Name = message.VesselName ?? string.Empty;
             tracked.OwnerName = message.OwnerName ?? string.Empty;
             tracked.Access = message.Access;
+            tracked.LentTo = message.LentTo ?? string.Empty;
             SetController(tracked, message.ControllerId);
             if (IsLocal(tracked))
                 return;
@@ -388,6 +708,11 @@ namespace MultiKerbal.Client.Vessels
 
             tracked.ProtoVersion++;
             tracked.NextSpawnAttempt = 0;
+
+            // Con otra estructura se acepta cualquier estado que llegue después, aunque sea anterior al último: el servidor
+            // puede haberla devuelto a como estaba antes (alguien la destruyó sin permiso del dueño).
+            tracked.LastUpdate = null;
+            tracked.Motion.Clear();
         }
 
         private void OnUpdate(VesselUpdateMessage message)
@@ -436,6 +761,7 @@ namespace MultiKerbal.Client.Vessels
 
             tracked.OwnerName = message.OwnerName ?? string.Empty;
             tracked.Access = message.Access;
+            tracked.LentTo = message.LentTo ?? string.Empty;
         }
 
         private void SetController(TrackedVessel tracked, int controllerId)
@@ -445,6 +771,8 @@ namespace MultiKerbal.Client.Vessels
             tracked.ControllerId = controllerId;
             tracked.ControlPending = false;
             bool isLocal = IsLocal(tracked);
+            if (isLocal)
+                tracked.Motion.Clear();
             if (!IsLiveScene())
                 return;
 
@@ -551,10 +879,10 @@ namespace MultiKerbal.Client.Vessels
             tracked.Name = Localizer.Format(vessel.vesselName);
             tracked.RememberPublished(vessel);
             tracked.NextUpdate = 0;
-            SendProto(tracked, data);
+            SendProto(tracked, vessel, data);
         }
 
-        private void SendProto(TrackedVessel tracked, byte[] data)
+        private void SendProto(TrackedVessel tracked, Vessel vessel, byte[] data)
         {
             tracked.Proto = data;
             _send(
@@ -564,6 +892,7 @@ namespace MultiKerbal.Client.Vessels
                     OwnerName = tracked.OwnerName,
                     Access = tracked.Access,
                     VesselName = tracked.Name,
+                    Crew = VesselSpawner.CrewOf(vessel),
                     StructureVersion = tracked.StructureVersion,
                     Data = data,
                 },
@@ -632,6 +961,10 @@ namespace MultiKerbal.Client.Vessels
                 if (vessel == null || vessel == active || vessel.loaded || !IsStable(vessel.situation))
                     continue;
 
+                // Mientras se mira una nave, la propia se guarda para volver a ella (si no, otro podría llevársela).
+                if (SpectatingId != Guid.Empty && vessel.id == _returnVesselId)
+                    continue;
+
                 Release(tracked, vessel);
             }
         }
@@ -657,7 +990,7 @@ namespace MultiKerbal.Client.Vessels
             // La definición va con la misma versión de estructura (combustible, tripulación...: nadie la recarga).
             byte[] data = TryEncode(vessel);
             if (data != null)
-                SendProto(tracked, data);
+                SendProto(tracked, vessel, data);
 
             VesselUpdateMessage last = VesselState.Capture(vessel, Planetarium.GetUniversalTime());
             _send(last, Delivery.Reliable);
@@ -725,7 +1058,7 @@ namespace MultiKerbal.Client.Vessels
             if (IsPilotedByOther(tracked))
                 return Loc.T($"\"{tracked.Name}\" la está pilotando {_playerName(tracked.ControllerId)}",
                              $"{_playerName(tracked.ControllerId)} is flying \"{tracked.Name}\"");
-            if (!VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, _localPlayerName()))
+            if (!HasPilotPermission(tracked))
                 return Loc.T($"\"{tracked.Name}\" es privada: solo {tracked.OwnerName} puede pilotarla",
                              $"\"{tracked.Name}\" is private: only {tracked.OwnerName} can fly it");
             return Loc.T($"No se pudo tomar el control de \"{tracked.Name}\"",
@@ -749,7 +1082,19 @@ namespace MultiKerbal.Client.Vessels
                 if (existing != null)
                 {
                     if (existing == FlightGlobals.ActiveVessel)
-                        continue; // No se recarga la nave que se está pilotando.
+                    {
+                        // La nave activa no se puede quitar de la escena. Si es la que miramos y ha cambiado (etapas,
+                        // acoplamiento...), se vuelve a cargar el vuelo alrededor de la nueva (y ya no se sigue: la escena
+                        // está cambiando). La que pilotamos no se recarga.
+                        if (IsSpectating(existing))
+                        {
+                            ReloadSpectated(tracked);
+                            return;
+                        }
+
+                        continue;
+                    }
+
                     RemoveSilently(existing);
                 }
 
@@ -832,15 +1177,53 @@ namespace MultiKerbal.Client.Vessels
             ReturnToOwnVessel();
         }
 
-        private void ReturnToOwnVessel()
+        private void ReloadSpectated(TrackedVessel tracked)
         {
-            Vessel previous = _previousActiveVesselId == Guid.Empty ? null : FlightGlobals.FindVessel(_previousActiveVesselId);
-            if (previous != null && previous.loaded && FlightGlobals.SetActiveVessel(previous))
+            ScreenMessages.PostScreenMessage(
+                Loc.T($"\"{tracked.Name}\" ha cambiado: recargando la vista", $"\"{tracked.Name}\" has changed: reloading the view").Replace("<", "‹"),
+                NoticeSeconds,
+                ScreenMessageStyle.UPPER_CENTER);
+            if (FlyToSpectate(tracked, true, out string error))
                 return;
 
-            // Sin una nave propia cercana a la que volver (p. ej. "Volar" desde la estación de seguimiento).
+            // Sin poder recargarla se deja de mirar (la copia vieja ya no se movería bien); no se reintenta en bucle.
+            tracked.FailedVersion = tracked.ProtoVersion;
+            ClientLog.Warn(error);
+            Notice(error);
+            StopSpectate();
+        }
+
+        /// <summary>
+        /// A la nave que pilotábamos antes de mirar (o de entrar en una que no podemos pilotar), aunque esté lejos;
+        /// si ya no existe, a la escena de la que veníamos.
+        /// </summary>
+        private void ReturnToOwnVessel()
+        {
+            Guid targetId = CanReturnTo(_returnVesselId) ? _returnVesselId
+                : CanReturnTo(_previousActiveVesselId) ? _previousActiveVesselId
+                : Guid.Empty;
+            GameScenes scene = _returnScene;
+            ForgetReturn();
+
+            Vessel previous = targetId == Guid.Empty ? null : FlightGlobals.FindVessel(targetId);
+            if (previous != null && previous != FlightGlobals.ActiveVessel)
+            {
+                // La nave activa es ajena y no la simulamos: KSP no tiene que comprobar si se puede cambiar (lo haría sobre ella).
+                if (previous.loaded && FlightGlobals.ForceSetActiveVessel(previous))
+                    return;
+
+                Game game = HighLogic.CurrentGame.Updated();
+                int index = game.flightState.protoVessels.FindIndex(p => p.vesselID == targetId);
+                if (index >= 0)
+                {
+                    FlyTo(game, index);
+                    return;
+                }
+            }
+
+            // Sin una nave propia a la que volver (p. ej. "Volar" desde la estación de seguimiento).
             GamePersistence.SaveGame("persistent", HighLogic.SaveFolder, SaveMode.OVERWRITE);
-            HighLogic.LoadScene(GameScenes.SPACECENTER);
+            HighLogic.LoadScene(scene);
         }
 
         private void SendLocalUpdates(double now)
@@ -848,7 +1231,7 @@ namespace MultiKerbal.Client.Vessels
             double universalTime = Planetarium.GetUniversalTime();
             foreach (TrackedVessel tracked in _tracked.Values)
             {
-                if (!IsLocal(tracked) || now < tracked.NextUpdate)
+                if (!IsLocal(tracked))
                     continue;
 
                 Vessel vessel = LiveVessel(tracked);
@@ -856,16 +1239,29 @@ namespace MultiKerbal.Client.Vessels
                     continue;
 
                 bool physics = vessel.loaded && !vessel.packed;
-                tracked.NextUpdate = now + (physics ? PhysicsUpdateIntervalSeconds : RailsUpdateIntervalSeconds);
+                double interval = physics ? PhysicsUpdateIntervalSeconds : RailsUpdateIntervalSeconds;
+
+                // Al salir de raíles (fin del warp, nave que se carga) no se esperan los segundos que quedaban.
+                if (tracked.NextUpdate > now + interval)
+                    tracked.NextUpdate = now;
+                if (now < tracked.NextUpdate)
+                    continue;
+
+                // Se cuenta desde el envío previsto y no desde ahora: si no, los frames redondearían 30 Hz a 20.
+                double next = tracked.NextUpdate + interval;
+                tracked.NextUpdate = next > now ? next : now + interval;
                 Delivery delivery = tracked.FirstUpdatePending ? Delivery.Reliable : Delivery.Unreliable;
                 tracked.FirstUpdatePending = false;
                 _send(VesselState.Capture(vessel, universalTime), delivery);
             }
         }
 
-        private void PositionPuppets()
+        private void PositionPuppets(double now)
         {
             Vessel active = FlightGlobals.ActiveVessel;
+            double universalTime = Planetarium.GetUniversalTime();
+            // Sobre raíles no se adelanta (0): ver PuppetMotion.
+            double warpRate = TimeWarp.WarpMode == TimeWarp.Modes.HIGH && TimeWarp.CurrentRate > 1f ? 0.0 : TimeWarp.CurrentRate;
             foreach (TrackedVessel tracked in _tracked.Values)
             {
                 if (IsLocal(tracked) || tracked.LastUpdate == null || tracked.SpawnedVersion != tracked.ProtoVersion)
@@ -875,9 +1271,20 @@ namespace MultiKerbal.Client.Vessels
                 if (vessel == null || (vessel == active && !IsSpectating(vessel)))
                     continue;
 
+                VesselUpdateMessage update = tracked.LastUpdate;
+                CelestialBody body = VesselState.BodyOf(update);
+                if (body == null)
+                    continue;
+
+                if (update.UniversalTime > tracked.Motion.LatestUniversalTime)
+                {
+                    tracked.Motion.Add(
+                        update.BodyIndex, update.UniversalTime, VesselState.PoseOf(update), universalTime, now, warpRate, body.Radius);
+                }
+
                 if (!vessel.packed)
                     vessel.GoOnRails();
-                VesselState.PositionPuppet(vessel, tracked.LastUpdate);
+                VesselState.PositionPuppet(vessel, update, tracked.Motion.Current(universalTime, now, warpRate));
             }
         }
 
@@ -901,8 +1308,14 @@ namespace MultiKerbal.Client.Vessels
 
             if (IsLocal(tracked))
             {
-                // Destruida en nuestra partida: choque, acoplada a otra nave propia, kerbal que embarca...
-                ForgetAndPublishRemoval(tracked);
+                // Destruida en nuestra partida: choque, calor... o fundida con otra (acoplamiento, kerbal que embarca),
+                // que no necesita permiso del dueño. Si no lo hay, el servidor la devuelve a donde la tomamos.
+                VesselRemoveReason reason = WasMerged(vessel.id) ? VesselRemoveReason.Merged : VesselRemoveReason.Destroyed;
+                if (reason == VesselRemoveReason.Destroyed && !HasRemovePermission(tracked))
+                    Notice(Loc.T(
+                        $"\"{tracked.Name}\" es de {tracked.OwnerName}: volverá a donde estaba cuando la tomaste",
+                        $"\"{tracked.Name}\" belongs to {tracked.OwnerName}: it will go back where it was when you took it"));
+                ForgetAndPublishRemoval(tracked, reason);
                 return;
             }
 
@@ -911,6 +1324,57 @@ namespace MultiKerbal.Client.Vessels
             tracked.SpawnedVersion = -1;
             tracked.NextSpawnAttempt = LocalClock.Now + RespawnRetrySeconds;
         }
+
+        /// <summary>
+        /// KSP avisa de que dos piezas se unen (acoplamiento, garra) o de que un kerbal embarca justo antes de destruir
+        /// la nave que desaparece en la fusión: se apuntan las dos naves durante un momento.
+        /// </summary>
+        private void OnPartCouple(GameEvents.FromToAction<Part, Part> action)
+        {
+            RememberMerge(action.from);
+            RememberMerge(action.to);
+        }
+
+        private void RememberMerge(Part part)
+        {
+            if (part != null && part.vessel != null)
+                _merging[part.vessel.id] = LocalClock.Now + MergeMemorySeconds;
+        }
+
+        private bool WasMerged(Guid vesselId) =>
+            _merging.TryGetValue(vesselId, out double until) && LocalClock.Now <= until;
+
+        /// <summary>
+        /// El servidor no acepta una nave que acabamos de publicar (por ejemplo, lleva un kerbal que va en la nave de
+        /// otro jugador): se quita de esta partida. Si es la que pilotamos, se vuelve al Centro Espacial y se quita allí.
+        /// </summary>
+        private void OnReject(VesselRejectMessage message)
+        {
+            _removed.Add(message.VesselId);
+            string name = Find(message.VesselId)?.Name ?? string.Empty;
+            _tracked.Remove(message.VesselId);
+            Notice(Loc.T($"No se puede usar \"{name}\": {message.Reason}", $"\"{name}\" cannot be used: {message.Reason}"));
+            ClientLog.Warn($"Nave rechazada por el servidor: {name}: {message.Reason}");
+            if (!IsLiveScene())
+                return;
+
+            Vessel vessel = FlightGlobals.FindVessel(message.VesselId);
+            if (vessel == null)
+                return;
+
+            if (vessel != FlightGlobals.ActiveVessel)
+            {
+                RemoveSilently(vessel);
+                return;
+            }
+
+            // La nave activa no se puede quitar: al entrar en el Centro Espacial, Reconcile la quita (está en _removed).
+            GamePersistence.SaveGame("persistent", HighLogic.SaveFolder, SaveMode.OVERWRITE);
+            HighLogic.LoadScene(GameScenes.SPACECENTER);
+        }
+
+        private static void Notice(string text) =>
+            ScreenMessages.PostScreenMessage(text.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
 
         /// <summary>Al acoplar, KSP funde las dos naves en una: se publica cuanto antes para que los demás la vean bien.</summary>
         private void OnDockingComplete(GameEvents.FromToAction<Part, Part> action)
@@ -928,35 +1392,41 @@ namespace MultiKerbal.Client.Vessels
         /// <summary>Al desacoplar aparece una nave nueva: se publica enseguida para que no tarde en salir en los demás.</summary>
         private void OnVesselsUndocking(Vessel from, Vessel to) => _nextScan = 0;
 
-        private void OnVesselRecovered(ProtoVessel proto, bool quick) => OnVesselGone(proto);
+        private void OnVesselRecovered(ProtoVessel proto, bool quick) => OnVesselGone(proto, VesselRemoveReason.Recovered);
 
-        private void OnVesselTerminated(ProtoVessel proto) => OnVesselGone(proto);
+        private void OnVesselTerminated(ProtoVessel proto) => OnVesselGone(proto, VesselRemoveReason.Deleted);
 
-        private void OnVesselGone(ProtoVessel proto)
+        private void OnVesselGone(ProtoVessel proto, VesselRemoveReason reason)
         {
             if (proto == null || !_tracked.TryGetValue(proto.vesselID, out TrackedVessel tracked))
                 return;
 
             if (CanRemove(tracked))
             {
-                ForgetAndPublishRemoval(tracked);
+                ForgetAndPublishRemoval(tracked, reason);
                 return;
             }
 
-            // Sin permiso (la pilota otro o no es nuestra): el servidor la mantiene, así que vuelve a aparecer.
+            Notice(Loc.T(
+                $"\"{tracked.Name}\" no es tuya: sin permiso de {tracked.OwnerName} no se puede recuperar ni borrar, así que volverá a aparecer",
+                $"\"{tracked.Name}\" is not yours: without {tracked.OwnerName}'s permission it cannot be recovered or deleted, so it will come back"));
+            if (IsLocal(tracked))
+            {
+                // La pilotábamos: el servidor nos quita el control y nos la devuelve tal como está.
+                ForgetAndPublishRemoval(tracked, reason);
+                return;
+            }
+
+            // La pilota otro o no tenemos permiso: el servidor la mantiene, así que vuelve a aparecer.
             tracked.Vessel = null;
             tracked.SpawnedVersion = -1;
-            ScreenMessages.PostScreenMessage(
-                Loc.T($"\"{tracked.Name}\" no es tuya: volverá a aparecer", $"\"{tracked.Name}\" is not yours: it will come back").Replace("<", "‹"),
-                NoticeSeconds,
-                ScreenMessageStyle.UPPER_CENTER);
         }
 
-        private void ForgetAndPublishRemoval(TrackedVessel tracked)
+        private void ForgetAndPublishRemoval(TrackedVessel tracked, VesselRemoveReason reason)
         {
             _tracked.Remove(tracked.Id);
             _removed.Add(tracked.Id);
-            _send(new VesselRemoveMessage { VesselId = tracked.Id }, Delivery.Reliable);
+            _send(new VesselRemoveMessage { VesselId = tracked.Id, Reason = reason }, Delivery.Reliable);
         }
     }
 }

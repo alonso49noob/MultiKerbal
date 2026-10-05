@@ -10,6 +10,9 @@ namespace MultiKerbal.Common.Messages
         Editor = 3,
         Flight = 4,
         TrackingStation = 5,
+
+        /// <summary>Mirando la nave de otro jugador (el detalle es su nombre).</summary>
+        Watching = 6,
     }
 
     public sealed class PlayerInfo

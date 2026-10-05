@@ -6,6 +6,7 @@ using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
+using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Server.Net;
 using MultiKerbal.Server.Persistence;
@@ -29,6 +30,8 @@ public sealed partial class ServerHost
     private readonly UniverseStore _universe;
     private readonly VesselStore _vessels;
     private readonly ModStore _mods;
+    private readonly AccountStore _accounts;
+    private readonly ProgressSystem _progress;
     private readonly TimeSystem _time = new();
     /// <summary>Por id de conexión (incluye conexiones aún sin saludo).</summary>
     private readonly Dictionary<int, Player> _players = new();
@@ -47,6 +50,8 @@ public sealed partial class ServerHost
         _universe = new UniverseStore(config.DataDirectory);
         _vessels = new VesselStore(_universe.DirectoryPath);
         _mods = new ModStore(_universe.DirectoryPath);
+        _accounts = new AccountStore(_universe.DirectoryPath);
+        _progress = new ProgressSystem(_universe.DirectoryPath, config.Mode, config.StartingFunds);
     }
 
     public ServerConfig Config { get; }
@@ -58,6 +63,8 @@ public sealed partial class ServerHost
         UniverseData data = _universe.Load();
         _vessels.Load();
         _mods.Load();
+        _accounts.Load();
+        _progress.Load();
         double now = _clock.Now;
         _time.Initialize(data.UniversalTime, now);
         if (!Config.PauseClockWhenEmpty)
@@ -71,6 +78,7 @@ public sealed partial class ServerHost
 
         Log.Info($"Servidor \"{Config.ServerName}\" escuchando en el puerto {Port} (TCP y UDP)");
         Log.Info($"Universo en {_universe.DirectoryPath} — {KerbalTime.Format(data.UniversalTime)}, {_vessels.Count} nave(s)");
+        Log.Info($"Partida {GameModes.Describe(_progress.Mode)}, {_accounts.Count} cuenta(s) de jugador");
         Log.Info(_mods.HasReference
             ? $"Mods esperados: {_mods.Mods.Length} (de {_mods.Source}), control \"{Config.ModPolicy}\""
             : $"Sin lista de mods: se tomará la del primer jugador (control \"{Config.ModPolicy}\")");
@@ -107,7 +115,14 @@ public sealed partial class ServerHost
                 "The name can only contain letters, numbers, spaces and _ - .");
 
         if (!string.IsNullOrEmpty(config.Password) && request.Password != config.Password)
-            return Lang.T("Contraseña incorrecta", "Wrong password");
+            return Lang.T("Contraseña del servidor incorrecta", "Wrong server password");
+
+        if (string.IsNullOrEmpty(request.AccountPassword))
+            return Lang.T(
+                "Escribe tu contraseña de jugador. Si es la primera vez que entras con este nombre, será la de tu cuenta.",
+                "Enter your player password. If this is your first time with this name, it becomes your account's password.");
+        if (request.AccountPassword.Length > ProtocolInfo.MaxAccountPasswordLength)
+            return Lang.T("La contraseña de jugador es demasiado larga", "The player password is too long");
 
         List<string> names = connectedNames.ToList();
         if (names.Count >= config.MaxPlayers)
@@ -297,6 +312,12 @@ public sealed partial class ServerHost
             case VesselActionMessage action:
                 OnVesselAction(player, action);
                 break;
+            case VesselLendRequestMessage lend:
+                OnVesselLendRequest(player, lend);
+                break;
+            case ProgressChangeMessage change:
+                OnProgressChange(player, change);
+                break;
             case DisconnectMessage disconnect:
                 string reason = SanitizeText(disconnect.Reason, 100);
                 _network.Close(connection, reason.Length > 0 ? reason : "Salió del juego");
@@ -310,6 +331,10 @@ public sealed partial class ServerHost
     private void OnHandshake(Player player, HandshakeRequestMessage request)
     {
         string? rejection = ValidateHandshake(request, Config, AuthenticatedPlayers().Select(p => p.Name));
+        string name = request.PlayerName?.Trim() ?? string.Empty;
+        bool newAccount = false;
+        if (rejection == null)
+            rejection = CheckAccount(name, request.AccountPassword, out newAccount);
         List<ModDifference> modDifferences = CheckMods(request, ref rejection);
         if (rejection != null)
         {
@@ -325,6 +350,18 @@ public sealed partial class ServerHost
             return;
         }
 
+        // La cuenta se crea solo si se acepta todo lo demás (por ejemplo, los mods en modo estricto).
+        if (newAccount)
+        {
+            _accounts.Register(name, request.AccountPassword);
+            Log.Info($"Nueva cuenta de jugador: {name}");
+        }
+        else
+        {
+            name = _accounts.RegisteredName(name) ?? name;
+            _accounts.TouchLogin(name);
+        }
+
         double now = _clock.Now;
         bool firstPlayer = !AuthenticatedPlayers().Any();
         int playerId = _nextPlayerId++;
@@ -333,7 +370,7 @@ public sealed partial class ServerHost
         player.Info = new PlayerInfo
         {
             Id = playerId,
-            Name = request.PlayerName.Trim(),
+            Name = name,
             // Proporción áurea: tonos bien repartidos sin importar cuántos jugadores haya.
             ColorHue = (float)(playerId * 0.618033988749895 % 1.0),
             Activity = PlayerActivity.Loading,
@@ -354,16 +391,46 @@ public sealed partial class ServerHost
             UdpToken = player.Connection.UdpToken,
             ServerName = Config.ServerName,
             Motd = Config.Motd,
+            NewAccount = newAccount,
+            GameMode = _progress.Mode,
             Mods = _mods.Mods,
         });
         _network.Send(player.Connection, new PlayerListMessage { Players = AuthenticatedPlayers().Select(p => p.Info).ToArray() });
         _network.Send(player.Connection, _time.BuildState(now));
+        if (_progress.Mode != GameMode.Sandbox)
+            _network.Send(player.Connection, _progress.BuildState());
         SendVesselsTo(player);
         BroadcastReliable(new PlayerJoinedMessage { Player = player.Info }, except: player);
         SendSystemChat(Lang.T($"{player.Name} se ha unido a la partida", $"{player.Name} joined the game"));
 
         Log.Info($"{player.Name} (jugador {playerId}) se ha unido desde {player.Connection.RemoteEndPoint} — MultiKerbal {request.ModVersion}, KSP {request.GameVersion}");
         AnnounceMods(player, modDifferences);
+    }
+
+    /// <summary>
+    /// Null si puede entrar. Un nombre sin cuenta se registra con la contraseña que traiga (si es válida);
+    /// uno con cuenta solo entra con su contraseña.
+    /// </summary>
+    private string? CheckAccount(string name, string? password, out bool newAccount)
+    {
+        newAccount = false;
+        switch (_accounts.Check(name, password))
+        {
+            case AccountCheck.Valid:
+                return null;
+            case AccountCheck.NotRegistered:
+                if (!AccountStore.IsValidNewPassword(password))
+                    return Lang.T(
+                        $"Para crear tu cuenta, la contraseña de jugador debe tener al menos {ProtocolInfo.MinAccountPasswordLength} caracteres",
+                        $"To create your account, the player password must be at least {ProtocolInfo.MinAccountPasswordLength} characters long");
+                newAccount = true;
+                return null;
+            default:
+                Log.Info($"Contraseña de jugador incorrecta para {name}");
+                return Lang.T(
+                    $"La contraseña de jugador de \"{name}\" no es esa. Si la has olvidado, pide al administrador que borre tu cuenta.",
+                    $"That is not the player password for \"{name}\". If you forgot it, ask the server admin to delete your account.");
+        }
     }
 
     /// <summary>
@@ -444,6 +511,21 @@ public sealed partial class ServerHost
         });
     }
 
+    private void OnProgressChange(Player player, ProgressChangeMessage change)
+    {
+        if (!_progress.Apply(change))
+        {
+            // No vale en este modo o no cambia nada: se le devuelve el total para que se alinee.
+            if (_progress.Mode != GameMode.Sandbox)
+                _network.Send(player.Connection, _progress.BuildState());
+            return;
+        }
+
+        if (change.Kind == ProgressKind.Tech)
+            Log.Info($"{player.Name} ha investigado {change.TechId}");
+        BroadcastReliable(_progress.BuildState());
+    }
+
     private void RecomputeWarp(double now)
     {
         double previousRate = _time.Rate;
@@ -514,6 +596,7 @@ public sealed partial class ServerHost
         {
             _universe.Save(new UniverseData { UniversalTime = _time.CurrentUniversalTime(_clock.Now) });
             _vessels.SaveDirty();
+            _progress.Save();
         }
         catch (Exception ex)
         {

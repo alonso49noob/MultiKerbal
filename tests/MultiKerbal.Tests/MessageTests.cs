@@ -1,5 +1,6 @@
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Net;
+using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Vessels;
 
 namespace MultiKerbal.Tests;
@@ -78,6 +79,7 @@ internal static class SampleMessages
             ProtocolVersion = 1,
             PlayerName = "Jebediah",
             Password = "secreto",
+            AccountPassword = "mi contraseña",
             ModVersion = "0.1.0",
             GameVersion = "1.12.5",
         };
@@ -90,6 +92,8 @@ internal static class SampleMessages
             UdpToken = ulong.MaxValue - 7,
             ServerName = "Servidor de pruebas",
             Motd = "¡Hola!",
+            NewAccount = true,
+            GameMode = GameMode.Career,
         };
         yield return new DisconnectMessage { Reason = "Expulsado" };
         yield return new PingMessage { ClientTime = 123.456 };
@@ -127,7 +131,9 @@ internal static class SampleMessages
             ControllerId = 2,
             OwnerName = "Valentina",
             Access = VesselAccess.Private,
+            LentTo = "Bill",
             VesselName = "Kerbal X",
+            Crew = ["Jebediah Kerman", "Valentina Kerman"],
             StructureVersion = 3,
             Data = [0x1F, 0x8B, 1, 2, 3],
         };
@@ -152,10 +158,14 @@ internal static class SampleMessages
             RotationZ = 0.3f,
             RotationW = 0.927f,
         };
-        yield return new VesselRemoveMessage { VesselId = Guid.NewGuid() };
+        yield return new VesselRemoveMessage { VesselId = Guid.NewGuid(), Reason = VesselRemoveReason.Merged };
+        yield return new VesselRejectMessage { VesselId = Guid.NewGuid(), Reason = "Jeb ya va en otra nave" };
         yield return new VesselControlMessage { VesselId = Guid.NewGuid(), ControllerId = 5 };
         yield return new VesselControlRequestMessage { VesselId = Guid.NewGuid(), Acquire = true };
-        yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public };
+        yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public, LentTo = "Val" };
+        yield return new VesselLendRequestMessage { VesselId = Guid.NewGuid(), PlayerName = "Val" };
+        yield return new ProgressStateMessage { Funds = 25_000.5, Science = 12.25, Reputation = -3, Techs = ["start", "basicRocketry"] };
+        yield return new ProgressChangeMessage { Kind = ProgressKind.Tech, Amount = -5, TechId = "engineering101" };
         yield return new VesselOwnerRequestMessage { VesselId = Guid.NewGuid(), OwnerName = string.Empty, Access = VesselAccess.Shared };
         yield return new VesselHandoverRequestMessage { VesselId = Guid.NewGuid() };
         yield return new VesselHandoverAskMessage { VesselId = Guid.NewGuid(), FromPlayerId = 7 };

@@ -8,7 +8,10 @@ namespace MultiKerbal.Client.Systems
     {
         private const float NearbyDistance = 2500f;
 
-        public static WarpContext Read(TimeWarp timeWarp, double[] railsLadder)
+        /// <param name="watching">
+        /// Se está mirando una nave ajena: la nave activa no es nuestra (ni sabemos su empuje), así que cuenta como fuera del vuelo.
+        /// </param>
+        public static WarpContext Read(TimeWarp timeWarp, double[] railsLadder, bool watching)
         {
             var context = new WarpContext
             {
@@ -20,7 +23,7 @@ namespace MultiKerbal.Client.Systems
                 IdleSeconds = IdleTracker.Seconds,
             };
 
-            Vessel vessel = HighLogic.LoadedSceneIsFlight ? FlightGlobals.ActiveVessel : null;
+            Vessel vessel = HighLogic.LoadedSceneIsFlight && !watching ? FlightGlobals.ActiveVessel : null;
             if (vessel == null)
                 return context;
 

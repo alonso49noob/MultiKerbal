@@ -18,8 +18,9 @@ namespace MultiKerbal.Common.Vessels
     /// <summary>
     /// Reglas de propiedad de las naves, compartidas por el servidor (que las aplica) y el cliente (que las muestra).
     /// <list type="bullet">
-    /// <item>El dueño es un jugador identificado por su nombre y se conserva entre sesiones. Una nave sin dueño es de todos.</item>
+    /// <item>El dueño es un jugador identificado por su nombre (con su cuenta) y se conserva entre sesiones. Una nave sin dueño es de todos.</item>
     /// <item>Pilotar es tener el control en este momento: lo decide el servidor, de uno en uno, y es aparte del dueño.</item>
+    /// <item>El dueño puede prestarla a un jugador: puede pilotarla aunque sea privada, pero no destruirla ni recuperarla.</item>
     /// </list>
     /// </summary>
     public static class VesselPermissions
@@ -29,14 +30,20 @@ namespace MultiKerbal.Common.Vessels
         public static bool IsOwner(string owner, string player) =>
             HasOwner(owner) && string.Equals(owner, player, StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>Se la han prestado a este jugador.</summary>
+        public static bool IsBorrower(string lentTo, string player) => IsOwner(lentTo, player);
+
         public static bool IsValid(VesselAccess access) =>
             access == VesselAccess.Private || access == VesselAccess.Shared || access == VesselAccess.Public;
 
         /// <summary>Tomar el control cuando nadie la está pilotando.</summary>
-        public static bool CanPilot(string owner, VesselAccess access, string player) =>
-            !HasOwner(owner) || access != VesselAccess.Private || IsOwner(owner, player);
+        public static bool CanPilot(string owner, VesselAccess access, string lentTo, string player) =>
+            !HasOwner(owner) || access != VesselAccess.Private || IsOwner(owner, player) || IsBorrower(lentTo, player);
 
-        /// <summary>Recuperarla o borrarla (quien la pilota siempre puede perderla: choques, acoplamientos...).</summary>
+        /// <summary>
+        /// Destruirla, recuperarla o borrarla: solo con permiso del dueño (pública o sin dueño), aunque se esté pilotando.
+        /// Lo que sí puede quien la pilota es fundirla con otra (acoplamientos, kerbals que embarcan).
+        /// </summary>
         public static bool CanRemove(string owner, VesselAccess access, string player) =>
             !HasOwner(owner) || access == VesselAccess.Public || IsOwner(owner, player);
 

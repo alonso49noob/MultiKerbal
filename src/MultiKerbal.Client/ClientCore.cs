@@ -7,6 +7,7 @@ using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
+using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Time;
 using UnityEngine;
 
@@ -43,7 +44,12 @@ namespace MultiKerbal.Client
             Settings = ClientSettings.Load();
             Loc.Initialize(Settings.Language);
             TimeSync = new TimeSyncSystem(Clock);
-            Warp = new WarpSystem(Clock, message => Send(message), () => LocalPlayerName, () => Settings.Warp);
+            Warp = new WarpSystem(
+                Clock,
+                message => Send(message),
+                () => LocalPlayerName,
+                () => Settings.Warp,
+                () => Vessels != null && Vessels.SpectatingId != Guid.Empty);
             Vessels = new VesselSyncSystem(
                 () => Players.LocalPlayerId,
                 () => LocalPlayerName,
@@ -55,6 +61,7 @@ namespace MultiKerbal.Client
                 id => Vessels.Find(id) is TrackedVessel tracked && Vessels.IsPilotedByMe(tracked),
                 () => MultiplayerWindow != null && MultiplayerWindow.ChatFocused,
                 (message, delivery) => Send(message, delivery));
+            Progress = new ProgressSync(message => Send(message));
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
             ModsWindow = new ModsWindow(this);
@@ -78,6 +85,11 @@ namespace MultiKerbal.Client
         public VesselSyncSystem Vessels { get; }
 
         public SharedControlSystem SharedControl { get; }
+
+        public ProgressSync Progress { get; }
+
+        /// <summary>Tipo de partida del servidor (con el que se crea la partida local).</summary>
+        public GameMode GameMode { get; private set; }
 
         public HandoverWindow HandoverWindow { get; }
 
@@ -115,7 +127,7 @@ namespace MultiKerbal.Client
             Vessels.RegisterEvents();
         }
 
-        public void Connect(string host, int port, string playerName, string password)
+        public void Connect(string host, int port, string playerName, string password, string accountPassword)
         {
             if (State != SessionState.Disconnected)
                 return;
@@ -123,6 +135,7 @@ namespace MultiKerbal.Client
             Settings.Host = host;
             Settings.Port = port;
             Settings.PlayerName = playerName;
+            Settings.AccountPassword = accountPassword ?? string.Empty;
             Settings.Save();
 
             _password = password ?? string.Empty;
@@ -195,9 +208,10 @@ namespace MultiKerbal.Client
 
             TimeSync.Update();
             Warp.Update();
-            _status.Update(message => Send(message));
+            _status.Update(message => Send(message), Vessels.SpectatingId != Guid.Empty);
             Vessels.Update();
             SharedControl.Update();
+            Progress.Update();
         }
 
         public void OnGUI()
@@ -242,7 +256,7 @@ namespace MultiKerbal.Client
             ConnectWindow.Visible = false;
             try
             {
-                GameSession.StartSandbox(Clock.EstimateUniversalTime(LocalClock.Now));
+                GameSession.StartGame(Clock.EstimateUniversalTime(LocalClock.Now), GameMode);
             }
             catch (Exception ex)
             {
@@ -290,6 +304,7 @@ namespace MultiKerbal.Client
                 ProtocolVersion = ProtocolInfo.Version,
                 PlayerName = Settings.PlayerName,
                 Password = _password,
+                AccountPassword = Settings.AccountPassword,
                 ModVersion = ModVersion,
                 GameVersion = Versioning.VersionString,
                 Mods = ModScanner.Installed,
@@ -323,7 +338,11 @@ namespace MultiKerbal.Client
                 case VesselRemoveMessage _:
                 case VesselControlMessage _:
                 case VesselOwnerMessage _:
+                case VesselRejectMessage _:
                     Vessels.Handle(message);
+                    break;
+                case ProgressStateMessage progress:
+                    Progress.Handle(progress);
                     break;
                 case VesselCopilotMessage _:
                 case VesselInputMessage _:
@@ -349,6 +368,8 @@ namespace MultiKerbal.Client
             State = SessionState.Joined;
             Players.LocalPlayerId = response.PlayerId;
             ServerName = response.ServerName ?? string.Empty;
+            GameMode = GameModes.IsValid(response.GameMode) ? response.GameMode : GameMode.Sandbox;
+            Progress.Start(GameMode);
             StatusText = Loc.T($"Conectado a {ServerName}", $"Connected to {ServerName}");
             _nextPing = 0;
             _startGamePending = true;
@@ -357,6 +378,14 @@ namespace MultiKerbal.Client
 
             if (!string.IsNullOrEmpty(response.Motd))
                 Chat.Add(ServerName, response.Motd, SystemColor, true);
+            if (response.NewAccount)
+                Chat.Add("MultiKerbal", Loc.T(
+                    $"Cuenta creada: el nombre {Settings.PlayerName} es tuyo con esta contraseña. No la olvides: el administrador solo puede borrar la cuenta, no recuperarla.",
+                    $"Account created: the name {Settings.PlayerName} is yours with this password. Don't forget it: the admin can only delete the account, not recover it."), SystemColor, true);
+            if (GameMode != GameMode.Sandbox)
+                Chat.Add("MultiKerbal", Loc.T(
+                    $"Partida de {GameModes.Describe(GameMode)}: el progreso es de todos.",
+                    $"{GameModes.Describe(GameMode)} game: progress is shared by everyone."), SystemColor, true);
             ClientLog.Info($"Unido a \"{ServerName}\" como {Settings.PlayerName} (jugador {response.PlayerId})");
         }
 
@@ -431,6 +460,7 @@ namespace MultiKerbal.Client
             Warp.Reset();
             Vessels.Reset();
             SharedControl.Reset();
+            Progress.Reset();
             HandoverWindow.Clear();
             TimeSync.RequestHardSync();
             _status.Reset();

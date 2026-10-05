@@ -8,7 +8,7 @@ namespace MultiKerbal.Tests;
 public class HandshakeValidationTests
 {
     private static HandshakeRequestMessage Request(string name, int version = ProtocolInfo.Version, string? password = null) =>
-        new() { ProtocolVersion = version, PlayerName = name, Password = password };
+        new() { ProtocolVersion = version, PlayerName = name, Password = password, AccountPassword = TestClient.DefaultAccountPassword };
 
     [Fact]
     public void ValidRequest_IsAccepted()

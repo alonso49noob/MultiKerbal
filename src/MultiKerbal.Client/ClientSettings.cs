@@ -14,6 +14,14 @@ namespace MultiKerbal.Client
         public string Host = "127.0.0.1";
         public int Port = ProtocolInfo.DefaultPort;
 
+        /// <summary>
+        /// Contraseña de la cuenta del jugador. Solo se guarda si <see cref="RememberAccountPassword"/>, y en texto
+        /// plano en este ordenador (como cualquier "recordar contraseña" de un juego).
+        /// </summary>
+        public string AccountPassword = string.Empty;
+
+        public bool RememberAccountPassword = true;
+
         /// <summary>La dirección que dio playit.gg al hospedar, para no tener que buscarla cada vez.</summary>
         public string TunnelAddress = string.Empty;
 
@@ -53,6 +61,9 @@ namespace MultiKerbal.Client
                     settings.Port = port;
 
                 settings.TunnelAddress = node.GetValue("tunnelAddress") ?? string.Empty;
+                settings.RememberAccountPassword = ReadBool(node, "rememberAccountPassword", settings.RememberAccountPassword);
+                if (settings.RememberAccountPassword)
+                    settings.AccountPassword = node.GetValue("accountPassword") ?? string.Empty;
 
                 if (Enum.TryParse(node.GetValue("defaultAccess"), out VesselAccess access) && VesselPermissions.IsValid(access))
                     settings.DefaultAccess = access;
@@ -88,6 +99,9 @@ namespace MultiKerbal.Client
                 node.AddValue("host", Host);
                 node.AddValue("port", Port.ToString());
                 node.AddValue("tunnelAddress", TunnelAddress);
+                node.AddValue("rememberAccountPassword", RememberAccountPassword.ToString());
+                if (RememberAccountPassword && !string.IsNullOrEmpty(AccountPassword))
+                    node.AddValue("accountPassword", AccountPassword);
                 node.AddValue("defaultAccess", DefaultAccess.ToString());
                 node.AddValue("language", Language);
                 SaveWarp(node.AddNode("WARP_POLICY"), Warp);

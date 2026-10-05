@@ -110,6 +110,9 @@ namespace MultiKerbal.Common.Net
             private int _raiseEvents = 1;
             private long _bytesSent;
             private long _bytesReceived;
+
+            /// <summary>Bytes encolados para TCP que aún no se han escrito en el socket.</summary>
+            private long _queuedTcpBytes;
             private volatile NetClientState _state = NetClientState.Connecting;
             private volatile bool _udpStarted;
             private volatile bool _udpReady;
@@ -149,7 +152,18 @@ namespace MultiKerbal.Common.Net
                     data = FrameCodec.EncodeTcp(message);
                 }
 
-                _outgoing.Enqueue(new Outgoing(data, useUdp));
+                // Sin UDP: con el TCP atascado se pierde este estado en vez de retrasar todos los siguientes.
+                if (!useUdp && delivery == Delivery.Unreliable && Interlocked.Read(ref _queuedTcpBytes) > ProtocolInfo.MaxQueuedUnreliableBytes)
+                    return;
+
+                Enqueue(new Outgoing(data, useUdp));
+            }
+
+            private void Enqueue(Outgoing item)
+            {
+                if (!item.Udp)
+                    Interlocked.Add(ref _queuedTcpBytes, item.Data.Length);
+                _outgoing.Enqueue(item);
                 _sendSignal.Set();
             }
 
@@ -198,7 +212,9 @@ namespace MultiKerbal.Common.Net
                     return;
 
                 // Encolar antes de marcar: el hilo de envío cierra en cuanto ve el motivo y la cola vacía.
-                _outgoing.Enqueue(new Outgoing(FrameCodec.EncodeTcp(new DisconnectMessage { Reason = reason }), false));
+                byte[] goodbye = FrameCodec.EncodeTcp(new DisconnectMessage { Reason = reason });
+                Interlocked.Add(ref _queuedTcpBytes, goodbye.Length);
+                _outgoing.Enqueue(new Outgoing(goodbye, false));
                 _shutdownReason = reason;
                 _sendSignal.Set();
                 _shutdownTimer = new Timer(_ => Close(reason, raiseEvent: true), null, ShutdownGraceMs, Timeout.Infinite);
@@ -294,9 +310,15 @@ namespace MultiKerbal.Common.Net
                         while (_outgoing.TryDequeue(out Outgoing item))
                         {
                             if (item.Udp)
+                            {
                                 SendDatagram(item.Data);
+                            }
                             else
+                            {
                                 _stream.Write(item.Data, 0, item.Data.Length);
+                                Interlocked.Add(ref _queuedTcpBytes, -item.Data.Length);
+                            }
+
                             Interlocked.Add(ref _bytesSent, item.Data.Length);
                         }
 

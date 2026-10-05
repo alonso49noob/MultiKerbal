@@ -100,6 +100,10 @@ internal sealed class NetworkServer
             }
         }
 
+        // Sin UDP: si el jugador no da abasto, mejor perder este estado que retrasar todos los siguientes.
+        if (delivery == Delivery.Unreliable && connection.PendingBytes > ProtocolInfo.MaxQueuedUnreliableBytes)
+            return;
+
         SendFrame(connection, FrameCodec.EncodeTcp(message));
     }
 

@@ -23,15 +23,18 @@ internal sealed class TestClient : IDisposable
         return client;
     }
 
-    public static TestClient Join(int port, string name, string? password = null, ModInfo[]? mods = null)
+    /// <summary>Contraseña de cuenta con la que entran los clientes de prueba si no se indica otra.</summary>
+    public const string DefaultAccountPassword = "secreto";
+
+    public static TestClient Join(int port, string name, string? password = null, ModInfo[]? mods = null, string accountPassword = DefaultAccountPassword)
     {
-        TestClient client = TryJoin(port, name, password, mods);
+        TestClient client = TryJoin(port, name, password, mods, accountPassword);
         Assert.True(client.Welcome!.Accepted, client.Welcome.RejectReason);
         return client;
     }
 
     /// <summary>Como <see cref="Join"/> pero sin exigir que el servidor acepte (para probar rechazos).</summary>
-    public static TestClient TryJoin(int port, string name, string? password = null, ModInfo[]? mods = null)
+    public static TestClient TryJoin(int port, string name, string? password = null, ModInfo[]? mods = null, string? accountPassword = DefaultAccountPassword)
     {
         TestClient client = Connect(port);
         client.Send(new HandshakeRequestMessage
@@ -39,6 +42,7 @@ internal sealed class TestClient : IDisposable
             ProtocolVersion = ProtocolInfo.Version,
             PlayerName = name,
             Password = password,
+            AccountPassword = accountPassword,
             ModVersion = "test",
             GameVersion = "test",
             Mods = mods ?? [],

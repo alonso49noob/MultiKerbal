@@ -20,7 +20,8 @@ namespace MultiKerbal.Client.Systems
             _nextCheck = 0;
         }
 
-        public void Update(Action<IMessage> send)
+        /// <param name="watching">Se está mirando una nave ajena: la nave activa no es la nuestra.</param>
+        public void Update(Action<IMessage> send, bool watching)
         {
             double now = LocalClock.Now;
             if (now < _nextCheck)
@@ -28,7 +29,9 @@ namespace MultiKerbal.Client.Systems
             _nextCheck = now + CheckIntervalSeconds;
 
             PlayerActivity activity = ClientScenes.Activity;
-            Vessel vessel = activity == PlayerActivity.Flight ? FlightGlobals.ActiveVessel : null;
+            if (activity == PlayerActivity.Flight && watching)
+                activity = PlayerActivity.Watching;
+            Vessel vessel = activity == PlayerActivity.Flight || activity == PlayerActivity.Watching ? FlightGlobals.ActiveVessel : null;
             string detail = vessel != null ? Localizer.Format(vessel.vesselName) : string.Empty;
             if (_hasSent && activity == _sentActivity && detail == _sentDetail)
                 return;

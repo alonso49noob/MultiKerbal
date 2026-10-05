@@ -11,9 +11,13 @@ Mod multijugador para **Kerbal Space Program 1.12.5**: servidor dedicado y un ú
 - **Un solo reloj.** El universo avanza al warp **más lento** de los jugadores que están en el Centro Espacial, la estación de seguimiento o en vuelo. Nadie viaja al pasado, así que el guardado rápido, la carga rápida y revertir están desactivados.
 - **Ajustes de warp.** Aceptar automáticamente el warp de los demás hasta un máximo y solo con las condiciones que marques, aceptarlo mientras estás ausente, o rechazarlo automáticamente.
 - **Naves entre jugadores.** Todos ven las naves de todos, en vuelo, en el mapa y en la estación de seguimiento, con una etiqueta con su dueño. Las etiquetas se filtran por tipo de nave, como los filtros del mapa.
-- **Dueño y acceso por nave.** Cada nave es de quien la lanzó (se guarda en disco) y es *privada*, *compartida* o *pública*: eso decide quién más puede pilotarla, recuperarla o borrarla. El dueño puede cederla, regalarla o dejarla sin dueño.
+- **Dueño y acceso por nave.** Cada nave es de quien la lanzó (se guarda en disco) y es *privada*, *compartida* o *pública*: eso decide quién más puede pilotarla, destruirla, recuperarla o borrarla. El dueño puede prestarla, cederla, regalarla o dejarla sin dueño.
+- **Préstamos.** El dueño presta una nave (o un kerbal en EVA) a un jugador, que puede pilotarla aunque sea privada, y la recupera cuando quiere. Si quien la tiene prestada la destruye, vuelve a donde estaba cuando la tomó.
+- **Un kerbal, un jugador.** Un kerbal no puede ir a la vez en naves de dos jugadores.
+- **Cuentas.** Cada jugador entra con su nombre y su propia contraseña: nadie más puede usar tu nombre ni tus naves.
+- **Progreso compartido (en pruebas).** En partidas de ciencia o carrera, la ciencia, las tecnologías, los fondos y la reputación son de todos.
 - **Acoplamiento entre jugadores.** Cuando una nave libre se acerca a menos de 2,2 km, tu partida se encarga de su física: los puertos se tocan, las naves chocan y se funden como en un jugador.
-- **Control compartido.** Quien pilota puede nombrar copiloto a otro jugador: los mandos del copiloto viajan por la red y se suman a los suyos. También puedes pedir el control o mirar una nave cercana con los mandos bloqueados.
+- **Control compartido.** Quien pilota puede nombrar copiloto a otro jugador: los mandos del copiloto viajan por la red y se suman a los suyos. También puedes pedir el control de una nave ajena.
 - **Control de mods.** El servidor recuerda la lista de mods del primer jugador que entra. Antes de entrar en la partida ves esa lista comparada con la tuya: en verde lo que coincide y en rojo lo que falta o sobra.
 
 ## Instalación
@@ -71,7 +75,9 @@ El universo se guarda en la carpeta `Universe`, junto al servidor, cada minuto y
 
 ### 3. Conectarse
 
-En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre, la dirección del servidor (si pegas `dirección:puerto` de una vez, el puerto se rellena solo), el puerto (`6750` si no lo cambiaste) y la contraseña si la hay. Pulsa **Conectar y jugar**.
+En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre, la dirección del servidor (si pegas `dirección:puerto` de una vez, el puerto se rellena solo), el puerto (`6750` si no lo cambiaste) y la clave del servidor si la tiene. Pulsa **Conectar y jugar**.
+
+**Tu contraseña** es la de tu cuenta de jugador, distinta de la clave del servidor. La primera vez que entras con un nombre, ese nombre queda registrado con la contraseña que pongas (al menos 4 caracteres); después solo entra quien la sepa. Si la olvidas, el administrador puede borrar tu cuenta (`account delete <nombre>`) y eliges otra al volver a entrar. *Recordarla* la guarda en este ordenador.
 
 Si tus mods no coinciden con los del servidor, antes de empezar ves una lista con lo que falta y decides si entrar igualmente.
 
@@ -84,7 +90,7 @@ Si tus mods no coinciden con los del servidor, antes de empezar ves una lista co
 
 1. Arranca el servidor.
 2. Conéctate desde el menú principal de KSP.
-3. Se crea una partida sandbox local sincronizada con el servidor. El botón de MultiKerbal en la barra de aplicaciones abre jugadores, naves y chat.
+3. Se crea una partida local (sandbox, ciencia o carrera, según el servidor) sincronizada con él. El botón de MultiKerbal en la barra de aplicaciones abre jugadores, naves y chat.
 
 **Warp** (botón *Warp* en la ventana de MultiKerbal):
 
@@ -93,9 +99,15 @@ Si tus mods no coinciden con los del servidor, antes de empezar ves una lista co
 - *Rechazar automáticamente* si se cumple cualquiera de lo que marques. Sin nada marcado, rechaza siempre (también en el hangar). Mientras esté activado no se acepta nada automáticamente.
 - El warp físico (x2 a x4) nunca se acepta automáticamente.
 
-**Naves:** el botón *Nave* junto a cada nave de la lista muestra su dueño y su acceso, y deja regalarla, cederla, pedirla, mirarla o elegir copiloto. *Tus naves nuevas* decide con qué acceso nacen tus lanzamientos.
+**Naves:** el botón *Nave* junto a cada nave de la lista muestra su dueño y su acceso, y deja prestarla, regalarla, cederla, pedirla o elegir copiloto. *Tus naves nuevas* decide con qué acceso nacen tus lanzamientos.
 
-El jugador se identifica solo por su nombre: mientras el dueño de una nave no esté conectado, otro podría entrar con ese nombre. Por ahora la única protección es la contraseña del servidor.
+- *Prestarla* a un jugador: puede pilotarla aunque sea privada, pero no destruirla, recuperarla ni borrarla. Si la estás pilotando, además se la pasas. *Recuperarla* se la quita (si la está pilotando, deja de hacerlo); quien la tiene prestada puede *devolverla*.
+- Destruir, recuperar o borrar una nave ajena no se puede sin permiso de su dueño (que sea pública), aunque la estés pilotando. Si la estrellas, vuelve a donde estaba cuando la tomaste. Acoplarla a otra sí se puede.
+- Un kerbal que va en la nave de otro jugador no sale en tu hangar. Si lanzas una nave con un kerbal que ya está en la nave de otro, el servidor no la acepta y vuelves al Centro Espacial.
+
+**Mirar:** el botón *Mirar* junto a una nave que no pilotas lleva la cámara hasta ella, esté donde esté, con los mandos bloqueados. Si está lejos, se carga el vuelo a su alrededor; si estabas pilotando, tu nave tiene que estar estable: posada y quieta, o en órbita con los motores apagados. *Dejar de mirar* te devuelve a tu nave o a la escena de la que venías.
+
+**Progreso compartido (en pruebas):** con `GameMode` en `science` o `career`, la ciencia y las tecnologías (y, en carrera, los fondos y la reputación) son de todos: lo que gana o gasta uno lo ven los demás. Todavía no se comparten los experimentos ya hechos, las piezas compradas, los contratos ni las mejoras de edificios.
 
 ## Ajustes del servidor
 
@@ -106,14 +118,16 @@ El jugador se identifica solo por su nombre: mientras el dueño de una nave no e
 | `ServerName` | `Servidor MultiKerbal` | Nombre que ven los jugadores. |
 | `Port` | `6750` | Puerto TCP y UDP. |
 | `MaxPlayers` | `8` | Jugadores a la vez. |
-| `Password` | *(vacío)* | Vacío es sin contraseña. |
+| `Password` | *(vacío)* | Clave del servidor, la misma para todos. Vacío es sin clave. Aparte, cada jugador tiene su propia contraseña de cuenta. |
 | `Motd` | texto de bienvenida | Mensaje que sale en el chat al entrar. |
 | `PauseClockWhenEmpty` | `true` | Para el reloj del universo mientras no hay nadie. |
 | `ModPolicy` | `warn` | `off` no mira los mods, `warn` deja entrar a todos y avisa de las diferencias, `strict` rechaza a quien no los tenga iguales. |
 | `Language` | `es` | Idioma de los mensajes de chat y motivos de rechazo que manda el servidor: `es` o `en`. |
+| `GameMode` | `sandbox` | `sandbox` (sin progreso), `science` (ciencia y tecnologías compartidas) o `career` (además fondos y reputación). |
+| `StartingFunds` | `25000` | Fondos con los que empieza una carrera nueva. |
 | `DataDirectory` | `Universe` | Dónde se guarda el universo. |
 
-Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|compartida|publica]`, `mods [jugador|set <jugador>]`, `warp`, `say <texto>`, `kick <jugador> [motivo]`, `time`, `save`, `stop`. Escribe `help` para verlos en la consola.
+Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|compartida|publica]`, `account` (cuentas) y `account delete <jugador>` (si alguien olvidó su contraseña), `progress`, `mods [jugador|set <jugador>]`, `warp`, `say <texto>`, `kick <jugador> [motivo]`, `time`, `save`, `stop`. Escribe `help` para verlos en la consola.
 
 ## Compilar desde el código
 

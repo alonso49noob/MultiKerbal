@@ -11,7 +11,7 @@ namespace MultiKerbal.Client.UI
     internal sealed class MultiplayerWindow
     {
         private const int WindowId = 0x4D4B0002;
-        private const float Width = 500f;
+        private const float Width = 570f;
         private const float VesselListHeight = 150f;
         private const float ChatHeight = 190f;
         private const string InputControl = "MultiKerbalChatInput";
@@ -184,12 +184,36 @@ namespace MultiKerbal.Client.UI
                 GUILayout.Label(DescribePilot(tracked), UiStyles.Muted, GUILayout.Width(85f));
                 GUILayout.Label(DescribeDistance(tracked, active), UiStyles.Muted);
                 GUILayout.FlexibleSpace();
+                DrawWatchButton(tracked);
                 if (GUILayout.Button(Loc.T("Nave", "Vessel"), GUILayout.Width(62f)))
                     _ownership.Toggle(tracked.Id);
                 GUILayout.EndHorizontal();
             }
 
             GUILayout.EndScrollView();
+        }
+
+        /// <summary>Mirar (o dejar de mirar) una nave que no pilotas, esté donde esté.</summary>
+        private void DrawWatchButton(Vessels.TrackedVessel tracked)
+        {
+            if (_core.Vessels.IsPilotedByMe(tracked))
+            {
+                GUILayout.Space(66f);
+                return;
+            }
+
+            if (_core.Vessels.SpectatingId == tracked.Id)
+            {
+                if (GUILayout.Button(Loc.T("Dejar", "Stop"), GUILayout.Width(62f)))
+                    _core.Vessels.StopSpectate();
+                return;
+            }
+
+            if (GUILayout.Button(Loc.T("Mirar", "Watch"), GUILayout.Width(62f))
+                && !_core.Vessels.BeginSpectate(tracked, out string error))
+            {
+                ScreenMessages.PostScreenMessage(error.Replace("<", "‹"), 5f, ScreenMessageStyle.UPPER_CENTER);
+            }
         }
 
         private static VesselAccess NextAccess(VesselAccess access)
@@ -211,6 +235,10 @@ namespace MultiKerbal.Client.UI
                 return Loc.T("sin dueño", "no owner");
 
             string owner = _core.Vessels.IsOwnedByMe(tracked) ? Loc.T("tuya", "yours") : tracked.OwnerName;
+            if (tracked.LentTo.Length > 0)
+                return _core.Vessels.IsLentToMe(tracked)
+                    ? Loc.T($"{owner} → a ti", $"{owner} → you")
+                    : $"{owner} → {tracked.LentTo}";
             return $"{owner} · {UiStrings.Access(tracked.Access)}";
         }
 
@@ -323,6 +351,8 @@ namespace MultiKerbal.Client.UI
                         : Loc.T("Pilotando " + player.Detail, "Flying " + player.Detail);
                 case PlayerActivity.TrackingStation:
                     return Loc.T("En la estación de seguimiento", "At the tracking station");
+                case PlayerActivity.Watching:
+                    return Loc.T("Mirando " + player.Detail, "Watching " + player.Detail);
                 default:
                     return Loc.T("Cargando...", "Loading...");
             }

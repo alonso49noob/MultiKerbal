@@ -41,5 +41,13 @@ namespace MultiKerbal.Common.Messages
         VesselCopilot = 70,
         VesselInput = 71,
         VesselAction = 72,
+
+        // Naves: préstamos y rechazos
+        VesselReject = 73,
+        VesselLendRequest = 74,
+
+        // Progreso compartido
+        ProgressState = 80,
+        ProgressChange = 81,
     }
 }

@@ -23,7 +23,13 @@ namespace MultiKerbal.Common.Messages
         /// <summary>Del cliente solo se usa al crear la nave (su acceso por defecto).</summary>
         public VesselAccess Access;
 
+        /// <summary>Servidor → cliente: jugador al que el dueño se la ha prestado (vacío = a nadie). El servidor ignora el del cliente.</summary>
+        public string LentTo;
+
         public string VesselName;
+
+        /// <summary>Nombres de los kerbals a bordo. El servidor no deja que un kerbal esté en naves de dos jugadores.</summary>
+        public string[] Crew = new string[0];
 
         /// <summary>
         /// Cambia solo cuando cambia la estructura (piezas, tripulación, nombre). Un reenvío con el mismo valor
@@ -39,7 +45,9 @@ namespace MultiKerbal.Common.Messages
             writer.WriteInt32(ControllerId);
             writer.WriteString(OwnerName);
             writer.WriteByte((byte)Access);
+            writer.WriteString(LentTo);
             writer.WriteString(VesselName);
+            writer.WriteStrings(Crew);
             writer.WriteInt32(StructureVersion);
             writer.WriteBytes(Data);
         }
@@ -50,7 +58,9 @@ namespace MultiKerbal.Common.Messages
             ControllerId = reader.ReadInt32();
             OwnerName = reader.ReadString();
             Access = (VesselAccess)reader.ReadByte();
+            LentTo = reader.ReadString();
             VesselName = reader.ReadString();
+            Crew = reader.ReadStrings(ProtocolInfo.MaxCrewPerVessel);
             StructureVersion = reader.ReadInt32();
             Data = reader.ReadBytes();
         }
@@ -142,16 +152,70 @@ namespace MultiKerbal.Common.Messages
         }
     }
 
-    /// <summary>Ambos sentidos. La nave dejó de existir (destruida, recuperada, acoplada a otra...).</summary>
+    /// <summary>Por qué desaparece una nave: decide si hace falta permiso del dueño.</summary>
+    public enum VesselRemoveReason : byte
+    {
+        /// <summary>Destruida en la partida de quien la pilota (choque, calor, fuera de alcance en la atmósfera...).</summary>
+        Destroyed = 0,
+
+        /// <summary>Recuperada (vuelve al Centro Espacial con su tripulación).</summary>
+        Recovered = 1,
+
+        /// <summary>Borrada desde la estación de seguimiento.</summary>
+        Deleted = 2,
+
+        /// <summary>Fundida en otra nave: acoplamiento, garra o un kerbal que embarca. No hace falta permiso.</summary>
+        Merged = 3,
+    }
+
+    /// <summary>
+    /// Ambos sentidos. La nave dejó de existir. Destruirla, recuperarla o borrarla necesita permiso del dueño
+    /// (ver <see cref="VesselPermissions.CanRemove"/>); si no lo hay, el servidor la mantiene y la devuelve.
+    /// </summary>
     public sealed class VesselRemoveMessage : IMessage
     {
         public MessageType Type => MessageType.VesselRemove;
 
         public Guid VesselId;
 
-        public void Write(PacketWriter writer) => writer.WriteGuid(VesselId);
+        /// <summary>Del cliente al servidor; del servidor a los demás va tal cual.</summary>
+        public VesselRemoveReason Reason;
 
-        public void Read(PacketReader reader) => VesselId = reader.ReadGuid();
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteGuid(VesselId);
+            writer.WriteByte((byte)Reason);
+        }
+
+        public void Read(PacketReader reader)
+        {
+            VesselId = reader.ReadGuid();
+            Reason = (VesselRemoveReason)reader.ReadByte();
+        }
+    }
+
+    /// <summary>
+    /// Servidor → cliente. No se acepta una nave nueva que acaba de publicar (p. ej. lleva un kerbal que ya va en la
+    /// nave de otro jugador). El cliente la quita de su partida.
+    /// </summary>
+    public sealed class VesselRejectMessage : IMessage
+    {
+        public MessageType Type => MessageType.VesselReject;
+
+        public Guid VesselId;
+        public string Reason;
+
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteGuid(VesselId);
+            writer.WriteString(Reason);
+        }
+
+        public void Read(PacketReader reader)
+        {
+            VesselId = reader.ReadGuid();
+            Reason = reader.ReadString();
+        }
     }
 
     /// <summary>Servidor → cliente. Quién pilota la nave (0 = nadie). También responde a una petición denegada.</summary>
@@ -196,7 +260,7 @@ namespace MultiKerbal.Common.Messages
         }
     }
 
-    /// <summary>Servidor → cliente. Dueño y acceso de una nave tras un cambio (o la respuesta a una petición denegada).</summary>
+    /// <summary>Servidor → cliente. Dueño, acceso y préstamo de una nave tras un cambio (o la respuesta a una petición denegada).</summary>
     public sealed class VesselOwnerMessage : IMessage
     {
         public MessageType Type => MessageType.VesselOwner;
@@ -208,11 +272,15 @@ namespace MultiKerbal.Common.Messages
 
         public VesselAccess Access;
 
+        /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie).</summary>
+        public string LentTo;
+
         public void Write(PacketWriter writer)
         {
             writer.WriteGuid(VesselId);
             writer.WriteString(OwnerName);
             writer.WriteByte((byte)Access);
+            writer.WriteString(LentTo);
         }
 
         public void Read(PacketReader reader)
@@ -220,6 +288,38 @@ namespace MultiKerbal.Common.Messages
             VesselId = reader.ReadGuid();
             OwnerName = reader.ReadString();
             Access = (VesselAccess)reader.ReadByte();
+            LentTo = reader.ReadString();
+        }
+    }
+
+    /// <summary>
+    /// Cliente → servidor. Prestar una nave a un jugador conectado, o terminar el préstamo (nombre vacío).
+    /// <list type="bullet">
+    /// <item>El dueño la presta (aunque sea privada: el préstamo le deja pilotarla) o la recupera; al recuperarla,
+    /// si quien la tenía prestada la está pilotando, deja de hacerlo.</item>
+    /// <item>Quien la tiene prestada puede devolverla.</item>
+    /// </list>
+    /// Un kerbal en EVA es una nave más: se presta igual.
+    /// </summary>
+    public sealed class VesselLendRequestMessage : IMessage
+    {
+        public MessageType Type => MessageType.VesselLendRequest;
+
+        public Guid VesselId;
+
+        /// <summary>Vacío = recuperarla (el dueño) o devolverla (quien la tiene prestada).</summary>
+        public string PlayerName;
+
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteGuid(VesselId);
+            writer.WriteString(PlayerName);
+        }
+
+        public void Read(PacketReader reader)
+        {
+            VesselId = reader.ReadGuid();
+            PlayerName = reader.ReadString();
         }
     }
 

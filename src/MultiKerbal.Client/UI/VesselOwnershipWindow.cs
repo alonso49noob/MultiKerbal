@@ -21,7 +21,8 @@ namespace MultiKerbal.Client.UI
 
         private readonly ClientCore _core;
         private readonly GUI.WindowFunction _drawContents;
-        private Rect _rect = new Rect(560f, 180f, Width, 0f);
+        // A la derecha de la ventana principal (x 60, 570 de ancho): así no tapa los botones de la lista de naves.
+        private Rect _rect = new Rect(650f, 180f, Width, 0f);
         private Guid _vesselId;
 
         /// <summary>Acción que espera un segundo clic de confirmación (regalar, ceder, dejar sin dueño).</summary>
@@ -93,6 +94,8 @@ namespace MultiKerbal.Client.UI
             {
                 DrawAccessChoice(tracked);
                 GUILayout.Space(8f);
+                DrawLend(tracked);
+                GUILayout.Space(8f);
                 DrawGiveAway(tracked);
             }
             else
@@ -101,6 +104,7 @@ namespace MultiKerbal.Client.UI
                 GUILayout.Label(
                     Loc.T($"Solo {tracked.OwnerName} puede cambiarlo.", $"Only {tracked.OwnerName} can change this."),
                     UiStyles.Muted);
+                DrawBorrowed(tracked);
             }
 
             DrawControl(tracked);
@@ -130,6 +134,84 @@ namespace MultiKerbal.Client.UI
                           "If you make it private, whoever is flying it will be dropped out."),
                     UiStyles.Muted);
             }
+        }
+
+        /// <summary>
+        /// Prestarla a un jugador: puede pilotarla aunque sea privada, pero no destruirla, recuperarla ni regalarla.
+        /// Si la pilotas tú, además se la pasas. Se recupera cuando quieras.
+        /// </summary>
+        private void DrawLend(TrackedVessel tracked)
+        {
+            GUILayout.Label(Loc.T("Prestarla:", "Lend it:"), UiStyles.Bold);
+            if (tracked.LentTo.Length > 0)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(Loc.T($"Prestada a {tracked.LentTo}", $"Lent to {tracked.LentTo}"), UiStyles.Label);
+                if (ConfirmButton(
+                        "recuperar",
+                        Loc.T("Recuperarla", "Take it back"),
+                        Loc.T("¿Seguro? Si la está pilotando, dejará de hacerlo. Pulsa otra vez", "Are you sure? If they are flying it, they will stop. Click again")))
+                {
+                    _core.Vessels.RequestLend(tracked, string.Empty);
+                }
+
+                GUILayout.EndHorizontal();
+                GUILayout.Label(
+                    Loc.T("Si la recuperas mientras vuela por la atmósfera, se quedará sin piloto.",
+                          "If you take it back while it flies through the atmosphere, it will be left without a pilot."),
+                    UiStyles.Muted);
+                return;
+            }
+
+            bool pilotingIt = _core.Vessels.IsPilotedByMe(tracked);
+            bool anyone = false;
+            GUILayout.BeginHorizontal();
+            foreach (PlayerInfo player in _core.Players.All)
+            {
+                if (player.Id == _core.Players.LocalPlayerId)
+                    continue;
+
+                anyone = true;
+                if (!GUILayout.Button(player.Name))
+                    continue;
+
+                _core.Vessels.RequestLend(tracked, player.Name);
+                if (pilotingIt)
+                    _core.Vessels.GrantControl(tracked.Id, player.Id); // Llega después del préstamo: ya puede pilotarla.
+            }
+
+            GUILayout.EndHorizontal();
+            if (!anyone)
+            {
+                GUILayout.Label(Loc.T("No hay otros jugadores conectados", "No other players connected"), UiStyles.Muted);
+                return;
+            }
+
+            GUILayout.Label(
+                pilotingIt
+                    ? Loc.T("Como la pilotas tú, además se la pasas. Podrá pilotarla aunque sea privada, pero no destruirla ni recuperarla.",
+                            "Since you are flying it, you also hand it over. They can fly it even if private, but not destroy or recover it.")
+                    : Loc.T("Podrá pilotarla aunque sea privada, pero no destruirla ni recuperarla. Si la destruye, vuelve a donde estaba.",
+                            "They can fly it even if private, but not destroy or recover it. If they destroy it, it goes back where it was."),
+                UiStyles.Muted);
+        }
+
+        /// <summary>Si nos la han prestado: de quién es y la opción de devolverla.</summary>
+        private void DrawBorrowed(TrackedVessel tracked)
+        {
+            if (!_core.Vessels.IsLentToMe(tracked))
+                return;
+
+            GUILayout.Space(6f);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(Loc.T($"{tracked.OwnerName} te la ha prestado", $"{tracked.OwnerName} lent it to you"), UiStyles.Label);
+            if (ConfirmButton("devolver", Loc.T("Devolverla", "Give it back"), Loc.T("¿Seguro? Pulsa otra vez", "Are you sure? Click again")))
+                _core.Vessels.RequestLend(tracked, string.Empty);
+            GUILayout.EndHorizontal();
+            GUILayout.Label(
+                Loc.T("Puedes pilotarla, pero no destruirla ni recuperarla: si se destruye, vuelve a donde estaba cuando la tomaste.",
+                      "You can fly it, but not destroy or recover it: if it is destroyed, it goes back where it was when you took it."),
+                UiStyles.Muted);
         }
 
         private void DrawGiveAway(TrackedVessel tracked)
@@ -183,23 +265,33 @@ namespace MultiKerbal.Client.UI
                     Loc.T("No la pilota nadie: acércate a ella y vuela con ella.",
                           "Nobody is flying it: get close and fly it."),
                     UiStyles.Muted);
+                DrawWatchButton(tracked);
                 return;
             }
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(Loc.T("Pedirle el control", "Ask to fly it")))
                 _core.Vessels.RequestHandover(tracked);
-            if (GUILayout.Button(Loc.T("Mirarla", "Watch it")))
-            {
-                if (!_core.Vessels.BeginSpectate(tracked, out string error))
-                    ScreenMessages.PostScreenMessage(error, 5f, ScreenMessageStyle.UPPER_CENTER);
-            }
-
+            DrawWatchButton(tracked);
             GUILayout.EndHorizontal();
             GUILayout.Label(
                 Loc.T("Para acoplarte necesitas que quien la pilota te la ceda o que la suelte.",
                       "To dock you need whoever flies it to hand it over or let it go."),
                 UiStyles.Muted);
+        }
+
+        /// <summary>Mirarla desde aquí, esté donde esté (si está lejos, se carga el vuelo alrededor de ella).</summary>
+        private void DrawWatchButton(TrackedVessel tracked)
+        {
+            if (_core.Vessels.SpectatingId == tracked.Id)
+            {
+                if (GUILayout.Button(Loc.T("Dejar de mirarla", "Stop watching it")))
+                    _core.Vessels.StopSpectate();
+                return;
+            }
+
+            if (GUILayout.Button(Loc.T("Mirarla", "Watch it")) && !_core.Vessels.BeginSpectate(tracked, out string error))
+                ScreenMessages.PostScreenMessage(error.Replace("<", "‹"), 5f, ScreenMessageStyle.UPPER_CENTER);
         }
 
         private void DrawPilotControls(TrackedVessel tracked)

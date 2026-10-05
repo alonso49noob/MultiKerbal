@@ -10,11 +10,13 @@ internal sealed class TestServer : IDisposable
     private readonly List<TestClient> _clients = new();
 
     private readonly string _modPolicy;
+    private readonly string _gameMode;
 
-    public TestServer(string modPolicy = "warn")
+    public TestServer(string modPolicy = "warn", string gameMode = "sandbox")
     {
         Log.ConsoleEnabled = false;
         _modPolicy = modPolicy;
+        _gameMode = gameMode;
         Host = StartHost();
     }
 
@@ -27,6 +29,9 @@ internal sealed class TestServer : IDisposable
     public TestClient Join(string name, params ModInfo[] mods) => Track(TestClient.Join(Port, name, null, mods));
 
     public TestClient TryJoin(string name, params ModInfo[] mods) => Track(TestClient.TryJoin(Port, name, null, mods));
+
+    public TestClient TryJoinWithAccount(string name, string? accountPassword) =>
+        Track(TestClient.TryJoin(Port, name, null, null, accountPassword));
 
     public TestClient Track(TestClient client)
     {
@@ -62,6 +67,7 @@ internal sealed class TestServer : IDisposable
             DataDirectory = _dataDirectory,
             ServerName = "Servidor de pruebas",
             ModPolicy = _modPolicy,
+            GameMode = _gameMode,
         });
         host.Start();
         return host;

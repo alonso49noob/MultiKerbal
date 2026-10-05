@@ -1,4 +1,5 @@
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Vessels;
 using UnityEngine;
 
 namespace MultiKerbal.Client.Vessels
@@ -90,17 +91,59 @@ namespace MultiKerbal.Client.Vessels
             vessel.orbitDriver.updateMode = update.IsOnSurface ? OrbitDriver.UpdateMode.IDLE : OrbitDriver.UpdateMode.UPDATE;
         }
 
-        public static void PositionPuppet(Vessel vessel, VesselUpdateMessage update)
+        /// <summary>
+        /// Lleva una nave guardada (aún sin crear) al último estado recibido: la definición puede tener hasta 30 s
+        /// y KSP la colocaría ahí al cargar el vuelo.
+        /// </summary>
+        public static void PlaceProto(ProtoVessel proto, VesselUpdateMessage update)
         {
             CelestialBody body = BodyOf(update);
             if (body == null)
                 return;
 
-            Quaternion rotation = body.bodyTransform.rotation * RotationOf(update);
+            var situation = (Vessel.Situations)update.Situation;
+            proto.situation = situation;
+            proto.landed = situation == Vessel.Situations.LANDED || situation == Vessel.Situations.PRELAUNCH;
+            proto.splashed = situation == Vessel.Situations.SPLASHED;
+            proto.latitude = update.Latitude;
+            proto.longitude = update.Longitude;
+            proto.altitude = update.Altitude;
+            proto.rotation = RotationOf(update);
+            proto.orbitSnapShot = new OrbitSnapshot(new Orbit(
+                update.Inclination,
+                update.Eccentricity,
+                update.SemiMajorAxis,
+                update.LongitudeOfAscendingNode,
+                update.ArgumentOfPeriapsis,
+                update.MeanAnomalyAtEpoch,
+                update.Epoch,
+                body));
+        }
+
+        public static SurfacePose PoseOf(VesselUpdateMessage update) => new SurfacePose
+        {
+            Latitude = update.Latitude,
+            Longitude = update.Longitude,
+            Altitude = update.Altitude,
+            Rotation = new Rotation(update.RotationX, update.RotationY, update.RotationZ, update.RotationW),
+        };
+
+        /// <summary>
+        /// Coloca la marioneta cada frame en la posición suavizada (<paramref name="pose"/>, ver <see cref="PuppetMotion"/>).
+        /// En vuelo la posición la pone KSP sobre la órbita y aquí solo se gira.
+        /// </summary>
+        public static void PositionPuppet(Vessel vessel, VesselUpdateMessage update, SurfacePose pose)
+        {
+            CelestialBody body = BodyOf(update);
+            if (body == null)
+                return;
+
+            var smoothed = new Quaternion((float)pose.Rotation.X, (float)pose.Rotation.Y, (float)pose.Rotation.Z, (float)pose.Rotation.W);
+            Quaternion rotation = body.bodyTransform.rotation * smoothed;
             if (update.IsOnSurface)
             {
                 vessel.SetRotation(rotation, false);
-                vessel.SetPosition(body.GetWorldSurfacePosition(update.Latitude, update.Longitude, update.Altitude), true);
+                vessel.SetPosition(body.GetWorldSurfacePosition(pose.Latitude, pose.Longitude, pose.Altitude), true);
             }
             else
             {
@@ -108,6 +151,10 @@ namespace MultiKerbal.Client.Vessels
             }
         }
 
+        /// <summary>
+        /// Marioneta: sin física local y movida por la red. Si es la nave activa (se está mirando) no se empaqueta aquí:
+        /// lo hace <see cref="VesselSyncSystem"/> cada frame.
+        /// </summary>
         public static void MakePuppet(Vessel vessel)
         {
             var ranges = new VesselRanges(PhysicsGlobals.Instance.VesselRangesDefault);

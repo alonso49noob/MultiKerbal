@@ -115,6 +115,16 @@ namespace MultiKerbal.Common.Serialization
             return value;
         }
 
+        /// <summary>Lista de textos escrita con <see cref="PacketWriter.WriteStrings"/>; los null se leen como vacíos.</summary>
+        public string[] ReadStrings(int max)
+        {
+            int count = ReadCount(max);
+            var values = new string[count];
+            for (int i = 0; i < count; i++)
+                values[i] = ReadString() ?? string.Empty;
+            return values;
+        }
+
         public Guid ReadGuid()
         {
             Require(16);

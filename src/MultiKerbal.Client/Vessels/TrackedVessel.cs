@@ -30,6 +30,9 @@ namespace MultiKerbal.Client.Vessels
 
         public VesselAccess Access { get; set; } = VesselAccess.Shared;
 
+        /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie).</summary>
+        public string LentTo { get; set; } = string.Empty;
+
         public string Name { get; set; } = string.Empty;
 
         /// <summary>Última definición conocida (comprimida).</summary>
@@ -53,6 +56,9 @@ namespace MultiKerbal.Client.Vessels
         public double NextSpawnAttempt { get; set; }
 
         public VesselUpdateMessage LastUpdate { get; set; }
+
+        /// <summary>Movimiento suavizado entre estados recibidos (solo marionetas).</summary>
+        public PuppetMotion Motion { get; } = new PuppetMotion();
 
         /// <summary>Referencia en la escena actual (puede estar destruida: comprobar antes de usar).</summary>
         public Vessel Vessel { get; set; }

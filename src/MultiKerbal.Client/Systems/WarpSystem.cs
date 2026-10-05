@@ -19,6 +19,9 @@ namespace MultiKerbal.Client.Systems
         private readonly Action<IMessage> _send;
         private readonly Func<string> _localPlayerName;
         private readonly Func<WarpPolicy> _policy;
+
+        /// <summary>Se está mirando una nave ajena (la nave activa no es nuestra).</summary>
+        private readonly Func<bool> _watching;
         private readonly WarpDecision _decision = new WarpDecision();
         private readonly LadderCache _rails = new LadderCache();
         private readonly LadderCache _physics = new LadderCache();
@@ -44,12 +47,13 @@ namespace MultiKerbal.Client.Systems
         private bool _limiterNoticeShown;
         private bool _acceptNoticeShown;
 
-        public WarpSystem(SharedClock clock, Action<IMessage> send, Func<string> localPlayerName, Func<WarpPolicy> policy)
+        public WarpSystem(SharedClock clock, Action<IMessage> send, Func<string> localPlayerName, Func<WarpPolicy> policy, Func<bool> watching)
         {
             _clock = clock;
             _send = send;
             _localPlayerName = localPlayerName;
             _policy = policy;
+            _watching = watching;
         }
 
         /// <summary>Qué pasaría ahora mismo si otro jugador pidiera warp (para la ventana de ajustes).</summary>
@@ -89,7 +93,7 @@ namespace MultiKerbal.Client.Systems
             double[] railsLadder = _rails.Get(timeWarp.warpRates);
             double[] ladder = mode == WarpMode.Physics ? _physics.Get(timeWarp.physicsWarpRates) : railsLadder;
 
-            WarpPolicyDecision policy = WarpPolicyEvaluator.Evaluate(settings, WarpContextReader.Read(timeWarp, railsLadder));
+            WarpPolicyDecision policy = WarpPolicyEvaluator.Evaluate(settings, WarpContextReader.Read(timeWarp, railsLadder, _watching()));
             PolicyStatus = Describe(settings, policy);
 
             // Nadie pide warp: vuelve a aceptarse hasta el límite del ajuste aunque antes se bajara un warp aceptado.

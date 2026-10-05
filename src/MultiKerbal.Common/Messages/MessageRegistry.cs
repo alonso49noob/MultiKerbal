@@ -34,6 +34,10 @@ namespace MultiKerbal.Common.Messages
             { MessageType.VesselCopilot, () => new VesselCopilotMessage() },
             { MessageType.VesselInput, () => new VesselInputMessage() },
             { MessageType.VesselAction, () => new VesselActionMessage() },
+            { MessageType.VesselReject, () => new VesselRejectMessage() },
+            { MessageType.VesselLendRequest, () => new VesselLendRequestMessage() },
+            { MessageType.ProgressState, () => new ProgressStateMessage() },
+            { MessageType.ProgressChange, () => new ProgressChangeMessage() },
         };
 
         public static IEnumerable<MessageType> RegisteredTypes => Factories.Keys;

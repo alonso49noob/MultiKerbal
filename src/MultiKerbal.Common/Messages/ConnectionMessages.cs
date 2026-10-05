@@ -1,4 +1,5 @@
 using MultiKerbal.Common.Mods;
+using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Serialization;
 
 namespace MultiKerbal.Common.Messages
@@ -11,7 +12,16 @@ namespace MultiKerbal.Common.Messages
         // ProtocolVersion va siempre primero para poder rechazar versiones distintas con un mensaje claro.
         public int ProtocolVersion;
         public string PlayerName;
+
+        /// <summary>Contraseña del servidor (la misma para todos; vacía si no tiene).</summary>
         public string Password;
+
+        /// <summary>
+        /// Contraseña de la cuenta del jugador. La primera vez que entra un nombre, queda registrado con ella;
+        /// después solo entra quien la sepa.
+        /// </summary>
+        public string AccountPassword;
+
         public string ModVersion;
         public string GameVersion;
 
@@ -23,6 +33,7 @@ namespace MultiKerbal.Common.Messages
             writer.WriteInt32(ProtocolVersion);
             writer.WriteString(PlayerName);
             writer.WriteString(Password);
+            writer.WriteString(AccountPassword);
             writer.WriteString(ModVersion);
             writer.WriteString(GameVersion);
             WriteMods(writer, Mods);
@@ -33,6 +44,7 @@ namespace MultiKerbal.Common.Messages
             ProtocolVersion = reader.ReadInt32();
             PlayerName = reader.ReadString();
             Password = reader.ReadString();
+            AccountPassword = reader.ReadString();
             ModVersion = reader.ReadString();
             GameVersion = reader.ReadString();
             Mods = ReadMods(reader);
@@ -70,6 +82,12 @@ namespace MultiKerbal.Common.Messages
         public string ServerName;
         public string Motd;
 
+        /// <summary>Se acaba de registrar la cuenta con este nombre y contraseña.</summary>
+        public bool NewAccount;
+
+        /// <summary>Tipo de partida: el cliente crea la suya local del mismo tipo.</summary>
+        public GameMode GameMode;
+
         /// <summary>Mods que espera el servidor. Va también cuando se rechaza: así se puede ver qué falta.</summary>
         public ModInfo[] Mods = new ModInfo[0];
 
@@ -82,6 +100,8 @@ namespace MultiKerbal.Common.Messages
             writer.WriteUInt64(UdpToken);
             writer.WriteString(ServerName);
             writer.WriteString(Motd);
+            writer.WriteBool(NewAccount);
+            writer.WriteByte((byte)GameMode);
             HandshakeRequestMessage.WriteMods(writer, Mods);
         }
 
@@ -94,6 +114,8 @@ namespace MultiKerbal.Common.Messages
             UdpToken = reader.ReadUInt64();
             ServerName = reader.ReadString();
             Motd = reader.ReadString();
+            NewAccount = reader.ReadBool();
+            GameMode = (GameMode)reader.ReadByte();
             Mods = HandshakeRequestMessage.ReadMods(reader);
         }
     }

@@ -1,3 +1,4 @@
+using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Serialization;
 using MultiKerbal.Common.Vessels;
@@ -21,6 +22,18 @@ internal sealed class StoredVessel
 
     public VesselAccess Access { get; set; } = VesselAccess.Shared;
 
+    /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie). Se guarda en disco.</summary>
+    public string LentTo { get; set; } = string.Empty;
+
+    /// <summary>Kerbals a bordo según quien la pilota: un kerbal no puede ir en naves de dos jugadores.</summary>
+    public string[] Crew { get; set; } = [];
+
+    /// <summary>
+    /// Cómo estaba cuando la tomó alguien sin permiso para destruirla: si la destruye, vuelve aquí.
+    /// Null si quien la pilota puede destruirla.
+    /// </summary>
+    public VesselCheckpoint? Checkpoint { get; set; }
+
     /// <summary>Jugador que la pilota en esta sesión (0 = nadie). No se guarda en disco.</summary>
     public int ControllerId { get; set; }
 
@@ -35,11 +48,17 @@ internal sealed class StoredVessel
     public bool Dirty { get; set; }
 }
 
+/// <summary>Definición y estado de una nave en un momento dado (ver <see cref="StoredVessel.Checkpoint"/>).</summary>
+internal sealed record VesselCheckpoint(byte[] Data, string[] Crew, VesselUpdateMessage? LastUpdate);
+
 /// <summary>Naves del universo: un archivo por nave en Universe/Vessels/{id}.vessel, con escritura atómica.</summary>
 internal sealed class VesselStore
 {
-    /// <summary>1: sin versión de estructura. 2: con versión de estructura. 3: con dueño y acceso.</summary>
-    private const int FileVersion = 3;
+    /// <summary>
+    /// 1: sin versión de estructura. 2: con versión de estructura. 3: con dueño y acceso.
+    /// 4: con préstamo, tripulación y punto de restauración.
+    /// </summary>
+    private const int FileVersion = 4;
     private const string Extension = ".vessel";
 
     private readonly Dictionary<Guid, StoredVessel> _vessels = new();
@@ -126,9 +145,18 @@ internal sealed class VesselStore
         writer.WriteInt32(vessel.StructureVersion);
         writer.WriteString(vessel.OwnerName);
         writer.WriteByte((byte)vessel.Access);
+        writer.WriteString(vessel.LentTo);
+        writer.WriteStrings(vessel.Crew);
         writer.WriteBytes(vessel.Data);
-        writer.WriteBool(vessel.LastUpdate != null);
-        vessel.LastUpdate?.Write(writer);
+        WriteUpdate(writer, vessel.LastUpdate);
+        writer.WriteBool(vessel.Checkpoint != null);
+        if (vessel.Checkpoint != null)
+        {
+            writer.WriteBytes(vessel.Checkpoint.Data);
+            writer.WriteStrings(vessel.Checkpoint.Crew);
+            WriteUpdate(writer, vessel.Checkpoint.LastUpdate);
+        }
+
         return writer.ToArray();
     }
 
@@ -145,6 +173,8 @@ internal sealed class VesselStore
         // Las naves de versiones anteriores no tienen dueño: cualquiera puede reclamarlas.
         string owner = version >= 3 ? reader.ReadString() ?? string.Empty : string.Empty;
         var access = version >= 3 ? (VesselAccess)reader.ReadByte() : VesselAccess.Shared;
+        string lentTo = version >= 4 ? reader.ReadString() ?? string.Empty : string.Empty;
+        string[] crew = version >= 4 ? reader.ReadStrings(ProtocolInfo.MaxCrewPerVessel) : [];
         byte[] data = reader.ReadBytes() ?? [];
         if (id == Guid.Empty)
             throw new ProtocolException("Nave sin identificador");
@@ -158,16 +188,35 @@ internal sealed class VesselStore
             StructureVersion = structureVersion,
             OwnerName = owner,
             Access = access,
+            LentTo = lentTo,
+            Crew = crew,
             Data = data,
+            LastUpdate = ReadUpdate(reader),
         };
-        if (reader.ReadBool())
+        if (version >= 4 && reader.ReadBool())
         {
-            var update = new VesselUpdateMessage();
-            update.Read(reader);
-            vessel.LastUpdate = update;
+            byte[] checkpointData = reader.ReadBytes() ?? [];
+            string[] checkpointCrew = reader.ReadStrings(ProtocolInfo.MaxCrewPerVessel);
+            vessel.Checkpoint = new VesselCheckpoint(checkpointData, checkpointCrew, ReadUpdate(reader));
         }
 
         return vessel;
+    }
+
+    private static void WriteUpdate(PacketWriter writer, VesselUpdateMessage? update)
+    {
+        writer.WriteBool(update != null);
+        update?.Write(writer);
+    }
+
+    private static VesselUpdateMessage? ReadUpdate(PacketReader reader)
+    {
+        if (!reader.ReadBool())
+            return null;
+
+        var update = new VesselUpdateMessage();
+        update.Read(reader);
+        return update;
     }
 
     private string PathOf(Guid id) => Path.Combine(DirectoryPath, id.ToString("N") + Extension);

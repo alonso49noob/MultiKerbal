@@ -1,6 +1,8 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MultiKerbal.Common;
+using MultiKerbal.Common.Progress;
 
 namespace MultiKerbal.Server;
 
@@ -37,6 +39,18 @@ public sealed class ServerConfig
     /// <summary>Idioma de los mensajes que ve el jugador (chat y motivos de rechazo): "es" o "en".</summary>
     public string Language { get; set; } = "es";
 
+    /// <summary>
+    /// Tipo de partida: <c>sandbox</c> (sin progreso), <c>science</c> (ciencia y tecnologías compartidas) o
+    /// <c>career</c> (además fondos y reputación). Cambiarlo con jugadores dentro no les afecta hasta que vuelvan a entrar.
+    /// </summary>
+    public string GameMode { get; set; } = "sandbox";
+
+    /// <summary>Fondos con los que empieza una carrera nueva.</summary>
+    public double StartingFunds { get; set; } = 25_000;
+
+    [JsonIgnore]
+    public GameMode Mode { get; private set; } = Common.Progress.GameMode.Sandbox;
+
     public string DataDirectory { get; set; } = "Universe";
 
     public static ServerConfig LoadOrCreate(string path)
@@ -68,6 +82,28 @@ public sealed class ServerConfig
             Log.Warn($"ModPolicy \"{ModPolicy}\" no es válido (off, warn o strict): se usa warn");
             ModPolicy = "warn";
         }
+
+        GameMode = (GameMode ?? "sandbox").Trim().ToLowerInvariant();
+        switch (GameMode)
+        {
+            case "science":
+            case "ciencia":
+                Mode = Common.Progress.GameMode.Science;
+                break;
+            case "career":
+            case "carrera":
+                Mode = Common.Progress.GameMode.Career;
+                break;
+            default:
+                if (GameMode != "sandbox")
+                    Log.Warn($"GameMode \"{GameMode}\" no es válido (sandbox, science o career): se usa sandbox");
+                GameMode = "sandbox";
+                Mode = Common.Progress.GameMode.Sandbox;
+                break;
+        }
+
+        if (!double.IsFinite(StartingFunds) || StartingFunds < 0)
+            StartingFunds = 25_000;
 
         ServerName = string.IsNullOrWhiteSpace(ServerName) ? "Servidor MultiKerbal" : ServerName.Trim();
         Password ??= "";

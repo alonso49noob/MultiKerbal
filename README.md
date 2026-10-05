@@ -13,7 +13,7 @@ Multiplayer mod for **Kerbal Space Program 1.12.5**: a dedicated server and one 
 - **Vessels between players.** Everyone sees everyone's vessels, in flight, in the map and in the tracking station, with a label showing the owner. Labels can be filtered by vessel type, like the map filters.
 - **Owner and access per vessel.** Each vessel belongs to the player who launched it (kept on disk) and is *private*, *shared* or *public*: that decides who else can fly it, recover it or delete it. Owners can hand a vessel over, give it away or leave it without an owner.
 - **Docking between players.** When a free vessel comes within 2.2 km, your game takes over its physics, so ports touch, things collide and vessels merge like in single player.
-- **Shared control.** Whoever flies a vessel can name another player co-pilot: the co-pilot's controls travel over the network and add to the pilot's. You can also ask for control, or just watch a nearby vessel with the controls locked.
+- **Shared control.** Whoever flies a vessel can name another player co-pilot: the co-pilot's controls travel over the network and add to the pilot's. You can also ask for control of someone else's vessel.
 - **Mod checking.** The server remembers the mod list of the first player who joins. Before you enter the game you get the list compared with yours, green for what matches and red for what is missing or extra.
 
 ## Installation
@@ -71,7 +71,9 @@ The universe is saved in the `Universe` folder next to the server, every minute 
 
 ### 3. Connect
 
-In KSP's main menu, fill in the MultiKerbal window: your name, the server address (paste `address:port` in one go and the port fills itself in), the port (`6750` unless you changed it) and the password if there is one. Press **Connect and play**.
+In KSP's main menu, fill in the MultiKerbal window: your name, the server address (paste `address:port` in one go and the port fills itself in), the port (`6750` unless you changed it) and the server key if it has one. Press **Connect and play**.
+
+**Your password** is your player account's, separate from the server key. The first time you join with a name, that name is registered with the password you type (at least 4 characters); after that only someone who knows it gets in. If you forget it, the admin can delete your account (`account delete <name>`) and you pick a new one next time. *Remember it* stores it on this computer.
 
 If your mods do not match the server's, a list shows what is missing before the game starts, and you choose whether to join anyway.
 
@@ -93,9 +95,13 @@ If your mods do not match the server's, a list shows what is missing before the 
 - *Refuse automatically* when any of the ticked conditions is true. With nothing ticked it always refuses, even in the editor. While it is on, nothing is accepted automatically.
 - Physics warp (x2 to x4) is never accepted automatically.
 
-**Vessels:** open *Vessel* next to any vessel in the list to see its owner and access, give it away, hand it over, ask for it, watch it or pick a co-pilot. *Your new vessels* sets the access your launches start with.
+**Vessels:** open *Vessel* next to any vessel in the list to see its owner and access, give it away, hand it over, ask for it or pick a co-pilot. *Your new vessels* sets the access your launches start with.
 
-Identity is the player name: while a vessel's owner is offline, somebody else could join under that name. The server password is the only protection for now.
+**Watch:** the *Watch* button next to a vessel you are not flying takes the camera to it, wherever it is, with the controls locked. If it is far away, the flight scene loads around it; if you were flying, your vessel must be stable first: landed and still, or in orbit with the engines off. *Stop watching* takes you back to your vessel or to the scene you came from.
+
+**Lending:** the owner can lend a vessel (or a kerbal on EVA) to a player, who can fly it even if private but cannot destroy, recover or delete it, and take it back at any time. Destroying, recovering or deleting someone else's vessel needs its owner's permission (public access) even while you fly it; if you crash it, it goes back where it was when you took it. A kerbal can't be aboard two players' vessels at once.
+
+**Shared progress (experimental):** with `GameMode` set to `science` or `career`, science and technologies (plus funds and reputation in career) are shared by everyone.
 
 ## Server settings
 
@@ -106,14 +112,16 @@ Identity is the player name: while a vessel's owner is offline, somebody else co
 | `ServerName` | `Servidor MultiKerbal` | Name shown to players. |
 | `Port` | `6750` | TCP and UDP port. |
 | `MaxPlayers` | `8` | Players allowed at once. |
-| `Password` | *(empty)* | Empty means no password. |
+| `Password` | *(empty)* | Server key, the same for everyone. Empty means none. Each player also has their own account password. |
 | `Motd` | welcome text | Message shown in the chat when someone joins. |
 | `PauseClockWhenEmpty` | `true` | Stop the universe clock while nobody is connected. |
 | `ModPolicy` | `warn` | `off` ignores mods, `warn` lets everyone in and announces differences, `strict` refuses players whose mods differ. |
 | `Language` | `es` | Language of the chat messages and refusal reasons the server sends: `es` or `en`. |
+| `GameMode` | `sandbox` | `sandbox` (no progress), `science` (shared science and technologies) or `career` (plus funds and reputation). |
+| `StartingFunds` | `25000` | Funds a new career starts with. |
 | `DataDirectory` | `Universe` | Where the universe is stored. |
 
-Console commands: `list`, `vessels`, `owner <vessel> <player|nobody> [private|shared|public]`, `mods [player|set <player>]`, `warp`, `say <text>`, `kick <player> [reason]`, `time`, `save`, `stop`. Type `help` to see them in the console.
+Console commands: `list`, `vessels`, `owner <vessel> <player|nobody> [private|shared|public]`, `account` (accounts) and `account delete <player>` (forgotten password), `progress`, `mods [player|set <player>]`, `warp`, `say <text>`, `kick <player> [reason]`, `time`, `save`, `stop`. Type `help` to see them in the console.
 
 ## Building from source
 

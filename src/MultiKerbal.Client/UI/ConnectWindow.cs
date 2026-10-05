@@ -17,6 +17,7 @@ namespace MultiKerbal.Client.UI
         private string _host;
         private string _port;
         private string _password = string.Empty;
+        private string _accountPassword;
 
         public ConnectWindow(ClientCore core)
         {
@@ -41,6 +42,7 @@ namespace MultiKerbal.Client.UI
                 _name = _core.Settings.PlayerName;
                 _host = _core.Settings.Host;
                 _port = _core.Settings.Port.ToString();
+                _accountPassword = _core.Settings.AccountPassword;
             }
 
             if (_rect.x < 0f)
@@ -58,18 +60,39 @@ namespace MultiKerbal.Client.UI
             return value;
         }
 
+        private static string SecretField(string label, string value, int maxLength)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, UiStyles.Label, GUILayout.Width(LabelWidth));
+            value = GUILayout.PasswordField(value ?? string.Empty, '*', maxLength);
+            GUILayout.EndHorizontal();
+            return value;
+        }
+
         private void DrawContents(int id)
         {
             bool idle = _core.State == SessionState.Disconnected;
 
             GUI.enabled = idle;
             _name = Field(Loc.T("Nombre", "Name"), _name, ProtocolInfo.MaxPlayerNameLength);
+            _accountPassword = SecretField(Loc.T("Tu contraseña", "Your password"), _accountPassword, ProtocolInfo.MaxAccountPasswordLength);
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(LabelWidth + 4f);
+            bool remember = GUILayout.Toggle(_core.Settings.RememberAccountPassword, Loc.T("Recordarla en este ordenador", "Remember it on this computer"));
+            GUILayout.EndHorizontal();
+            if (remember != _core.Settings.RememberAccountPassword)
+            {
+                _core.Settings.RememberAccountPassword = remember;
+                _core.Settings.Save();
+            }
+
+            GUILayout.Label(
+                Loc.T("La primera vez que entras con un nombre, esta contraseña queda como la de tu cuenta: nadie más podrá usar tu nombre ni tus naves.",
+                      "The first time you join with a name, this becomes your account's password: nobody else can use your name or your vessels."),
+                UiStyles.Muted);
             _host = Field(Loc.T("Servidor", "Server"), _host, 128);
             _port = Field(Loc.T("Puerto", "Port"), _port, 5);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(Loc.T("Contraseña", "Password"), UiStyles.Label, GUILayout.Width(LabelWidth));
-            _password = GUILayout.PasswordField(_password, '*', 64);
-            GUILayout.EndHorizontal();
+            _password = SecretField(Loc.T("Clave servidor", "Server key"), _password, 64);
             GUI.enabled = true;
 
             DrawLanguage();
@@ -142,6 +165,14 @@ namespace MultiKerbal.Client.UI
                 return;
             }
 
+            if ((_accountPassword ?? string.Empty).Length < ProtocolInfo.MinAccountPasswordLength)
+            {
+                _core.SetStatus(Loc.T(
+                    $"Tu contraseña debe tener al menos {ProtocolInfo.MinAccountPasswordLength} caracteres",
+                    $"Your password needs at least {ProtocolInfo.MinAccountPasswordLength} characters"));
+                return;
+            }
+
             // "dirección:puerto" pegado de golpe (como lo copia la ventana Hospedar o lo da playit.gg).
             // Con más de un ':' es una IPv6 y se deja tal cual.
             int colon = host.IndexOf(':');
@@ -158,7 +189,7 @@ namespace MultiKerbal.Client.UI
                 return;
             }
 
-            _core.Connect(host, port, name, _password);
+            _core.Connect(host, port, name, _password, _accountPassword);
         }
     }
 }
