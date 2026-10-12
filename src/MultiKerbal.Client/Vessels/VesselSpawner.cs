@@ -8,12 +8,23 @@ namespace MultiKerbal.Client.Vessels
     internal static class VesselSpawner
     {
         /// <summary>Devuelve null y el motivo si KSP no puede cargar la nave.</summary>
-        public static Vessel Spawn(DecodedVessel decoded, out string error)
+        /// <param name="besideItsCopy">
+        /// En la escena sigue otra copia de la misma nave (la que esta sustituye): sus piezas tendrían los mismos
+        /// identificadores internos, así que se le dan otros antes de cargarla.
+        /// </param>
+        public static Vessel Spawn(DecodedVessel decoded, out string error, bool besideItsCopy = false)
         {
             Game game = HighLogic.CurrentGame;
             ProtoVessel proto = CreateProto(decoded, game, out error);
             if (proto == null)
                 return null;
+
+            if (besideItsCopy)
+            {
+                proto.persistentId = FlightGlobals.CheckVesselpersistentId(proto.persistentId, null, false, true);
+                foreach (ProtoPartSnapshot part in proto.protoPartSnapshots)
+                    part.persistentId = FlightGlobals.CheckProtoPartSnapShotpersistentId(part.persistentId, null, false, true);
+            }
 
             proto.Load(game.flightState);
             Vessel vessel = proto.vesselRef;
@@ -59,12 +70,19 @@ namespace MultiKerbal.Client.Vessels
             return proto;
         }
 
-        public static void Remove(Vessel vessel)
+        /// <param name="crewMoved">
+        /// Su tripulación va en otra copia de la misma nave (la que la sustituye): solo se baja de esta, sin tocar su
+        /// estado ni su asiento en la otra.
+        /// </param>
+        public static void Remove(Vessel vessel, bool crewMoved = false)
         {
             if (vessel == null || vessel == FlightGlobals.ActiveVessel)
                 return;
 
-            FreeCrew(vessel);
+            if (crewMoved)
+                DetachCrew(vessel);
+            else
+                FreeCrew(vessel);
             if (vessel.protoVessel != null)
                 HighLogic.CurrentGame.flightState.protoVessels.Remove(vessel.protoVessel);
             vessel.Die();
@@ -107,6 +125,10 @@ namespace MultiKerbal.Client.Vessels
 
                 foreach (ProtoCrewMember crew in freed)
                 {
+                    // Muerto o perdido lo decide el plantel compartido, no quitar una copia de la nave.
+                    if (crew.rosterStatus == ProtoCrewMember.RosterStatus.Dead || crew.rosterStatus == ProtoCrewMember.RosterStatus.Missing)
+                        continue;
+
                     bool elsewhere = FlightGlobals.Vessels.Any(v => v != null && v != vessel && v.GetVesselCrew().Contains(crew));
                     crew.rosterStatus = elsewhere ? ProtoCrewMember.RosterStatus.Assigned : ProtoCrewMember.RosterStatus.Available;
                 }
@@ -114,6 +136,29 @@ namespace MultiKerbal.Client.Vessels
             catch (Exception ex)
             {
                 ClientLog.Warn($"No se pudo liberar la tripulación de {vessel.vesselName}: {ex.Message}");
+            }
+        }
+
+        /// <summary>Vacía las listas de tripulación de la nave sin avisar a KSP: así, al destruirla, nadie muere.</summary>
+        private static void DetachCrew(Vessel vessel)
+        {
+            try
+            {
+                if (vessel.loaded)
+                {
+                    foreach (Part part in vessel.parts)
+                        part.protoModuleCrew.Clear();
+                }
+
+                if (vessel.protoVessel != null)
+                {
+                    foreach (ProtoPartSnapshot part in vessel.protoVessel.protoPartSnapshots)
+                        part.protoModuleCrew.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                ClientLog.Warn($"No se pudo bajar la tripulación de {vessel.vesselName}: {ex.Message}");
             }
         }
 

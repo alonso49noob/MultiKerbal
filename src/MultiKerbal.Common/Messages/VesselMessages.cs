@@ -32,6 +32,15 @@ namespace MultiKerbal.Common.Messages
         public string[] Crew = new string[0];
 
         /// <summary>
+        /// Cliente → servidor, solo al crearla: la nave de la que se separó (etapa, desacople, EVA). Si era de otro
+        /// jugador, la nueva sigue siendo de ese dueño. Vacío si no salió de otra.
+        /// </summary>
+        public Guid ParentId;
+
+        /// <summary>Servidor → cliente: su dueño puede devolverla a como la dejó (ver <see cref="VesselRestoreRequestMessage"/>).</summary>
+        public bool Restorable;
+
+        /// <summary>
         /// Cambia solo cuando cambia la estructura (piezas, tripulación, nombre). Un reenvío con el mismo valor
         /// actualiza los datos guardados pero no obliga a los demás a recargar la nave.
         /// </summary>
@@ -48,6 +57,8 @@ namespace MultiKerbal.Common.Messages
             writer.WriteString(LentTo);
             writer.WriteString(VesselName);
             writer.WriteStrings(Crew);
+            writer.WriteGuid(ParentId);
+            writer.WriteBool(Restorable);
             writer.WriteInt32(StructureVersion);
             writer.WriteBytes(Data);
         }
@@ -61,6 +72,8 @@ namespace MultiKerbal.Common.Messages
             LentTo = reader.ReadString();
             VesselName = reader.ReadString();
             Crew = reader.ReadStrings(ProtocolInfo.MaxCrewPerVessel);
+            ParentId = reader.ReadGuid();
+            Restorable = reader.ReadBool();
             StructureVersion = reader.ReadInt32();
             Data = reader.ReadBytes();
         }
@@ -275,12 +288,16 @@ namespace MultiKerbal.Common.Messages
         /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie).</summary>
         public string LentTo;
 
+        /// <summary>El dueño puede devolverla a como la dejó (la ha usado alguien sin permiso para destruirla).</summary>
+        public bool Restorable;
+
         public void Write(PacketWriter writer)
         {
             writer.WriteGuid(VesselId);
             writer.WriteString(OwnerName);
             writer.WriteByte((byte)Access);
             writer.WriteString(LentTo);
+            writer.WriteBool(Restorable);
         }
 
         public void Read(PacketReader reader)
@@ -289,7 +306,23 @@ namespace MultiKerbal.Common.Messages
             OwnerName = reader.ReadString();
             Access = (VesselAccess)reader.ReadByte();
             LentTo = reader.ReadString();
+            Restorable = reader.ReadBool();
         }
+    }
+
+    /// <summary>
+    /// Cliente → servidor. El dueño devuelve su nave a como la dejó antes de que la usara alguien sin permiso para
+    /// destruirla (por ejemplo, si se la devuelven sin piezas). Solo si nadie más la está pilotando.
+    /// </summary>
+    public sealed class VesselRestoreRequestMessage : IMessage
+    {
+        public MessageType Type => MessageType.VesselRestoreRequest;
+
+        public Guid VesselId;
+
+        public void Write(PacketWriter writer) => writer.WriteGuid(VesselId);
+
+        public void Read(PacketReader reader) => VesselId = reader.ReadGuid();
     }
 
     /// <summary>

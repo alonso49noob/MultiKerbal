@@ -32,6 +32,7 @@ public sealed partial class ServerHost
     private readonly ModStore _mods;
     private readonly AccountStore _accounts;
     private readonly ProgressSystem _progress;
+    private readonly RosterSystem _roster;
     private readonly TimeSystem _time = new();
     /// <summary>Por id de conexión (incluye conexiones aún sin saludo).</summary>
     private readonly Dictionary<int, Player> _players = new();
@@ -52,6 +53,7 @@ public sealed partial class ServerHost
         _mods = new ModStore(_universe.DirectoryPath);
         _accounts = new AccountStore(_universe.DirectoryPath);
         _progress = new ProgressSystem(_universe.DirectoryPath, config.Mode, config.StartingFunds);
+        _roster = new RosterSystem(_universe.DirectoryPath);
     }
 
     public ServerConfig Config { get; }
@@ -65,6 +67,7 @@ public sealed partial class ServerHost
         _mods.Load();
         _accounts.Load();
         _progress.Load();
+        _roster.Load();
         double now = _clock.Now;
         _time.Initialize(data.UniversalTime, now);
         if (!Config.PauseClockWhenEmpty)
@@ -318,6 +321,18 @@ public sealed partial class ServerHost
             case ProgressChangeMessage change:
                 OnProgressChange(player, change);
                 break;
+            case ScienceSubjectsMessage subjects:
+                OnScienceSubjects(player, subjects);
+                break;
+            case ContractsMessage contracts:
+                OnContracts(player, contracts);
+                break;
+            case KerbalsMessage kerbals:
+                OnKerbals(player, kerbals);
+                break;
+            case VesselRestoreRequestMessage restore:
+                OnVesselRestoreRequest(player, restore);
+                break;
             case DisconnectMessage disconnect:
                 string reason = SanitizeText(disconnect.Reason, 100);
                 _network.Close(connection, reason.Length > 0 ? reason : "Salió del juego");
@@ -397,8 +412,16 @@ public sealed partial class ServerHost
         });
         _network.Send(player.Connection, new PlayerListMessage { Players = AuthenticatedPlayers().Select(p => p.Info).ToArray() });
         _network.Send(player.Connection, _time.BuildState(now));
+        // El plantel antes que las naves: así el cliente ya conoce a sus tripulantes al crearlas.
+        _network.Send(player.Connection, _roster.BuildAll());
         if (_progress.Mode != GameMode.Sandbox)
+        {
             _network.Send(player.Connection, _progress.BuildState());
+            _network.Send(player.Connection, _progress.BuildSubjects());
+            if (GameModes.SharesMoney(_progress.Mode))
+                _network.Send(player.Connection, _progress.BuildContracts());
+        }
+
         SendVesselsTo(player);
         BroadcastReliable(new PlayerJoinedMessage { Player = player.Info }, except: player);
         SendSystemChat(Lang.T($"{player.Name} se ha unido a la partida", $"{player.Name} joined the game"));
@@ -522,8 +545,54 @@ public sealed partial class ServerHost
         }
 
         if (change.Kind == ProgressKind.Tech)
-            Log.Info($"{player.Name} ha investigado {change.TechId}");
+            Log.Info($"{player.Name} ha investigado {change.Id}");
+        else if (change.Kind == ProgressKind.Facility)
+            Log.Info($"{player.Name} ha mejorado {change.Id} (nivel {change.Amount:0.##})");
         BroadcastReliable(_progress.BuildState());
+    }
+
+    private void OnScienceSubjects(Player player, ScienceSubjectsMessage message)
+    {
+        List<ScienceSubjectInfo> changed = _progress.MergeSubjects(message.Subjects ?? []);
+        if (changed.Count > 0)
+            BroadcastReliable(new ScienceSubjectsMessage { Subjects = changed.ToArray() }, except: player);
+    }
+
+    /// <summary>Contratos aceptados o terminados: se reenvían; si ya había terminado de otra forma, se le corrige a quien lo mandó.</summary>
+    private void OnContracts(Player player, ContractsMessage message)
+    {
+        var accepted = new List<ContractInfo>();
+        var corrections = new List<ContractInfo>();
+        foreach (ContractInfo contract in message.Contracts ?? [])
+        {
+            switch (_progress.MergeContract(contract))
+            {
+                case ContractUpdateResult.Accepted:
+                    accepted.Add(contract);
+                    Log.Info($"{player.Name}: contrato {contract.Id.ToString("N")[..8]} {contract.Status}");
+                    break;
+                case ContractUpdateResult.AlreadyFinished:
+                    if (_progress.GetContract(contract.Id) is { } known)
+                        corrections.Add(known);
+                    break;
+            }
+        }
+
+        if (accepted.Count > 0)
+            BroadcastReliable(new ContractsMessage { Contracts = accepted.ToArray() }, except: player);
+        if (corrections.Count > 0)
+            _network.Send(player.Connection, new ContractsMessage { Contracts = corrections.ToArray() });
+    }
+
+    private void OnKerbals(Player player, KerbalsMessage message)
+    {
+        List<KerbalInfo> accepted = _roster.Merge(message.Kerbals ?? []);
+        if (accepted.Count == 0)
+            return;
+
+        foreach (KerbalInfo kerbal in accepted.Where(k => k.Life != KerbalLife.Alive))
+            Log.Info($"{player.Name}: {kerbal.Name} {kerbal.Life}");
+        BroadcastReliable(new KerbalsMessage { Kerbals = accepted.ToArray() }, except: player);
     }
 
     private void RecomputeWarp(double now)
@@ -597,6 +666,7 @@ public sealed partial class ServerHost
             _universe.Save(new UniverseData { UniversalTime = _time.CurrentUniversalTime(_clock.Now) });
             _vessels.SaveDirty();
             _progress.Save();
+            _roster.Save();
         }
         catch (Exception ex)
         {

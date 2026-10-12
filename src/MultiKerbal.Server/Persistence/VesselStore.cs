@@ -25,6 +25,12 @@ internal sealed class StoredVessel
     /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie). Se guarda en disco.</summary>
     public string LentTo { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Jugador que la publicó. Suele ser el dueño; no lo es en las etapas que suelta quien vuela una nave ajena
+    /// (siguen siendo del dueño), y ese jugador sí puede perderlas (se queman, se estrellan).
+    /// </summary>
+    public string Creator { get; set; } = string.Empty;
+
     /// <summary>Kerbals a bordo según quien la pilota: un kerbal no puede ir en naves de dos jugadores.</summary>
     public string[] Crew { get; set; } = [];
 
@@ -56,9 +62,9 @@ internal sealed class VesselStore
 {
     /// <summary>
     /// 1: sin versión de estructura. 2: con versión de estructura. 3: con dueño y acceso.
-    /// 4: con préstamo, tripulación y punto de restauración.
+    /// 4: con préstamo, tripulación y punto de restauración. 5: con quién la creó.
     /// </summary>
-    private const int FileVersion = 4;
+    private const int FileVersion = 5;
     private const string Extension = ".vessel";
 
     private readonly Dictionary<Guid, StoredVessel> _vessels = new();
@@ -147,6 +153,7 @@ internal sealed class VesselStore
         writer.WriteByte((byte)vessel.Access);
         writer.WriteString(vessel.LentTo);
         writer.WriteStrings(vessel.Crew);
+        writer.WriteString(vessel.Creator);
         writer.WriteBytes(vessel.Data);
         WriteUpdate(writer, vessel.LastUpdate);
         writer.WriteBool(vessel.Checkpoint != null);
@@ -175,6 +182,8 @@ internal sealed class VesselStore
         var access = version >= 3 ? (VesselAccess)reader.ReadByte() : VesselAccess.Shared;
         string lentTo = version >= 4 ? reader.ReadString() ?? string.Empty : string.Empty;
         string[] crew = version >= 4 ? reader.ReadStrings(ProtocolInfo.MaxCrewPerVessel) : [];
+        // Antes se creaba siempre a nombre del dueño.
+        string creator = version >= 5 ? reader.ReadString() ?? string.Empty : owner;
         byte[] data = reader.ReadBytes() ?? [];
         if (id == Guid.Empty)
             throw new ProtocolException("Nave sin identificador");
@@ -190,6 +199,7 @@ internal sealed class VesselStore
             Access = access,
             LentTo = lentTo,
             Crew = crew,
+            Creator = creator,
             Data = data,
             LastUpdate = ReadUpdate(reader),
         };

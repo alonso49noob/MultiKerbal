@@ -134,6 +134,8 @@ internal static class SampleMessages
             LentTo = "Bill",
             VesselName = "Kerbal X",
             Crew = ["Jebediah Kerman", "Valentina Kerman"],
+            ParentId = Guid.Parse("1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"),
+            Restorable = true,
             StructureVersion = 3,
             Data = [0x1F, 0x8B, 1, 2, 3],
         };
@@ -162,10 +164,43 @@ internal static class SampleMessages
         yield return new VesselRejectMessage { VesselId = Guid.NewGuid(), Reason = "Jeb ya va en otra nave" };
         yield return new VesselControlMessage { VesselId = Guid.NewGuid(), ControllerId = 5 };
         yield return new VesselControlRequestMessage { VesselId = Guid.NewGuid(), Acquire = true };
-        yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public, LentTo = "Val" };
+        yield return new VesselOwnerMessage { VesselId = Guid.NewGuid(), OwnerName = "Bill", Access = VesselAccess.Public, LentTo = "Val", Restorable = true };
         yield return new VesselLendRequestMessage { VesselId = Guid.NewGuid(), PlayerName = "Val" };
-        yield return new ProgressStateMessage { Funds = 25_000.5, Science = 12.25, Reputation = -3, Techs = ["start", "basicRocketry"] };
-        yield return new ProgressChangeMessage { Kind = ProgressKind.Tech, Amount = -5, TechId = "engineering101" };
+        yield return new ProgressStateMessage
+        {
+            Funds = 25_000.5,
+            Science = 12.25,
+            Reputation = -3,
+            Techs = ["start", "basicRocketry"],
+            Parts = ["mk1pod.v2", "solidBooster.sm.v2"],
+            Facilities = [new FacilityLevel { Id = "SpaceCenter/LaunchPad", Level = 0.5f }],
+        };
+        yield return new ScienceSubjectsMessage
+        {
+            Subjects =
+            [
+                new ScienceSubjectInfo
+                {
+                    Id = "crewReport@KerbinSrfLandedLaunchPad",
+                    Title = "Informe de tripulación desde LaunchPad",
+                    DataScale = 1,
+                    SubjectValue = 0.3f,
+                    ScienceCap = 1.5f,
+                    Science = 1.2f,
+                    ScientificValue = 0.2f,
+                },
+            ],
+        };
+        yield return new ContractsMessage
+        {
+            Contracts = [new ContractInfo { Id = Guid.Parse("9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"), Status = ContractStatus.Active, Node = "type = PartTest\nstate = Active\n" }],
+        };
+        yield return new KerbalsMessage
+        {
+            Kerbals = [new KerbalInfo { Name = "Jebediah Kerman", Life = KerbalLife.Dead, Node = "name = Jebediah Kerman\ntrait = Pilot\n" }],
+        };
+        yield return new VesselRestoreRequestMessage { VesselId = Guid.NewGuid() };
+        yield return new ProgressChangeMessage { Kind = ProgressKind.Facility, Amount = 0.5, Id = "SpaceCenter/LaunchPad" };
         yield return new VesselOwnerRequestMessage { VesselId = Guid.NewGuid(), OwnerName = string.Empty, Access = VesselAccess.Shared };
         yield return new VesselHandoverRequestMessage { VesselId = Guid.NewGuid() };
         yield return new VesselHandoverAskMessage { VesselId = Guid.NewGuid(), FromPlayerId = 7 };

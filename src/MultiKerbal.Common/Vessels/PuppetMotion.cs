@@ -86,6 +86,12 @@ namespace MultiKerbal.Common.Vessels
         /// <summary>Lo más que se adelanta una nave desde su último estado (latencia y algún estado perdido).</summary>
         internal const double MaxAheadRealSeconds = 0.25;
 
+        /// <summary>
+        /// Lo mismo para las posadas: en el suelo se frena y se choca de golpe, y adelantar mucho las hace pasarse.
+        /// Algo más que tres estados a 30 Hz: cubre la latencia normal sin pasarse más de un par de metros.
+        /// </summary>
+        internal const double MaxAheadSurfaceRealSeconds = 0.1;
+
         /// <summary>Estados más separados que esto no sirven para saber la velocidad (iba sobre raíles o se perdieron muchos).</summary>
         internal const double MaxGapRealSeconds = 0.5;
 
@@ -123,7 +129,8 @@ namespace MultiKerbal.Common.Vessels
         /// <param name="realTime">Reloj real local en segundos (el de las correcciones).</param>
         /// <param name="warpRate">Warp físico actual (1 sin warp; 0 en warp sobre raíles).</param>
         /// <param name="bodyRadius">Radio del cuerpo, para medir la corrección en metros.</param>
-        public void Add(int bodyIndex, double sampleUniversalTime, SurfacePose pose, double universalTime, double realTime, double warpRate, double bodyRadius)
+        /// <param name="onSurface">El estado es de una nave posada o amerizada (se adelanta menos).</param>
+        public void Add(int bodyIndex, double sampleUniversalTime, SurfacePose pose, double universalTime, double realTime, double warpRate, double bodyRadius, bool onSurface)
         {
             if (_latest != null && sampleUniversalTime <= _latest.UniversalTime)
                 return;
@@ -131,7 +138,7 @@ namespace MultiKerbal.Common.Vessels
             bool hadState = _latest != null && _latest.BodyIndex == bodyIndex;
             SurfacePose shown = hadState ? Current(universalTime, realTime, warpRate) : default;
 
-            var sample = new Sample(bodyIndex, sampleUniversalTime, pose, warpRate);
+            var sample = new Sample(bodyIndex, sampleUniversalTime, pose, warpRate, onSurface);
             _previous = hadState ? _latest : null;
             _latest = sample;
 
@@ -201,7 +208,8 @@ namespace MultiKerbal.Common.Vessels
                 return latest;
 
             // Hacia atrás (UT local algo por detrás del de quien la pilota) se interpola entre los dos estados.
-            double ahead = Math.Max(-gap, Math.Min(MaxAheadRealSeconds * rate, universalTime - _latest.UniversalTime));
+            double maxAhead = (_latest.OnSurface ? MaxAheadSurfaceRealSeconds : MaxAheadRealSeconds) * rate;
+            double ahead = Math.Max(-gap, Math.Min(maxAhead, universalTime - _latest.UniversalTime));
             double t = ahead / gap;
 
             SurfacePose previous = _previous.Pose;
@@ -238,8 +246,9 @@ namespace MultiKerbal.Common.Vessels
 
         private sealed class Sample
         {
-            public Sample(int bodyIndex, double universalTime, SurfacePose pose, double warpRate)
+            public Sample(int bodyIndex, double universalTime, SurfacePose pose, double warpRate, bool onSurface)
             {
+                OnSurface = onSurface;
                 BodyIndex = bodyIndex;
                 UniversalTime = universalTime;
                 Pose = pose;
@@ -247,6 +256,8 @@ namespace MultiKerbal.Common.Vessels
             }
 
             public int BodyIndex { get; }
+
+            public bool OnSurface { get; }
 
             /// <summary>Warp físico local al recibirlo (1 sin warp).</summary>
             public double WarpRate { get; }

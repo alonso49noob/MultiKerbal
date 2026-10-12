@@ -15,7 +15,7 @@ Mod multijugador para **Kerbal Space Program 1.12.5**: servidor dedicado y un ú
 - **Préstamos.** El dueño presta una nave (o un kerbal en EVA) a un jugador, que puede pilotarla aunque sea privada, y la recupera cuando quiere. Si quien la tiene prestada la destruye, vuelve a donde estaba cuando la tomó.
 - **Un kerbal, un jugador.** Un kerbal no puede ir a la vez en naves de dos jugadores.
 - **Cuentas.** Cada jugador entra con su nombre y su propia contraseña: nadie más puede usar tu nombre ni tus naves.
-- **Progreso compartido (en pruebas).** En partidas de ciencia o carrera, la ciencia, las tecnologías, los fondos y la reputación son de todos.
+- **Progreso compartido (en pruebas).** En partidas de ciencia o carrera, la ciencia, las tecnologías, los experimentos hechos, los fondos, la reputación, las piezas compradas, los edificios y los contratos aceptados son de todos. El plantel (contrataciones y muertes) se comparte siempre.
 - **Acoplamiento entre jugadores.** Cuando una nave libre se acerca a menos de 2,2 km, tu partida se encarga de su física: los puertos se tocan, las naves chocan y se funden como en un jugador.
 - **Control compartido.** Quien pilota puede nombrar copiloto a otro jugador: los mandos del copiloto viajan por la red y se suman a los suyos. También puedes pedir el control de una nave ajena.
 - **Control de mods.** El servidor recuerda la lista de mods del primer jugador que entra. Antes de entrar en la partida ves esa lista comparada con la tuya: en verde lo que coincide y en rojo lo que falta o sobra.
@@ -102,12 +102,14 @@ Si tus mods no coinciden con los del servidor, antes de empezar ves una lista co
 **Naves:** el botón *Nave* junto a cada nave de la lista muestra su dueño y su acceso, y deja prestarla, regalarla, cederla, pedirla o elegir copiloto. *Tus naves nuevas* decide con qué acceso nacen tus lanzamientos.
 
 - *Prestarla* a un jugador: puede pilotarla aunque sea privada, pero no destruirla, recuperarla ni borrarla. Si la estás pilotando, además se la pasas. *Recuperarla* se la quita (si la está pilotando, deja de hacerlo); quien la tiene prestada puede *devolverla*.
-- Destruir, recuperar o borrar una nave ajena no se puede sin permiso de su dueño (que sea pública), aunque la estés pilotando. Si la estrellas, vuelve a donde estaba cuando la tomaste. Acoplarla a otra sí se puede.
+- Destruir, recuperar o borrar una nave ajena no se puede sin permiso de su dueño (que sea pública), aunque la estés pilotando. Si la estrellas, vuelve a como la dejó su dueño. Acoplarla a otra sí se puede.
+- Las etapas que sueltes de una nave ajena siguen siendo de su dueño (pero las puedes perder: se queman, se estrellan).
+- Si te devuelven una nave dañada, *Devolverla a como la dejaste* la deja como estaba antes de prestarla, mientras nadie la pilote. Si vuelves a pilotarla tú, se queda como está.
 - Un kerbal que va en la nave de otro jugador no sale en tu hangar. Si lanzas una nave con un kerbal que ya está en la nave de otro, el servidor no la acepta y vuelves al Centro Espacial.
 
 **Mirar:** el botón *Mirar* junto a una nave que no pilotas lleva la cámara hasta ella, esté donde esté, con los mandos bloqueados. Si está lejos, se carga el vuelo a su alrededor; si estabas pilotando, tu nave tiene que estar estable: posada y quieta, o en órbita con los motores apagados. *Dejar de mirar* te devuelve a tu nave o a la escena de la que venías.
 
-**Progreso compartido (en pruebas):** con `GameMode` en `science` o `career`, la ciencia y las tecnologías (y, en carrera, los fondos y la reputación) son de todos: lo que gana o gasta uno lo ven los demás. Todavía no se comparten los experimentos ya hechos, las piezas compradas, los contratos ni las mejoras de edificios.
+**Progreso compartido (en pruebas):** con `GameMode` en `science` o `career`, la ciencia, las tecnologías y los experimentos ya hechos son de todos. En carrera también los fondos, la reputación, las piezas compradas, las mejoras de edificios y los contratos: las ofertas son de cada uno, pero un contrato aceptado lo tienen todos y lo cobra el primero que lo cumple. En cualquier modo, un kerbal contratado o muerto lo está para todos.
 
 ## Ajustes del servidor
 

@@ -33,6 +33,10 @@ namespace MultiKerbal.Client.Vessels
         private const float NoticeSeconds = 5f;
         private const double MergeMemorySeconds = 2.0;
         private const double AwaitLevelTimeoutSeconds = 60.0;
+        private const double SeparationMemorySeconds = 10.0;
+
+        /// <summary>Lo que se espera a que KSP cargue la versión nueva de la nave mirada antes de recargar el vuelo.</summary>
+        private const double SwapTimeoutSeconds = 5.0;
 
         /// <summary>KSP carga las naves a 2,5 km: el control se pide algo antes para que llegue a tiempo.</summary>
         private const double TakeoverDistance = 2200.0;
@@ -54,6 +58,12 @@ namespace MultiKerbal.Client.Vessels
 
         /// <summary>Naves que acaban de fundirse con otra (hasta cuándo se recuerda): su destrucción no es un choque.</summary>
         private readonly Dictionary<Guid, double> _merging = new Dictionary<Guid, double>();
+
+        /// <summary>De qué nave acaba de salir cada una (hasta publicarla): ver <see cref="RememberSeparation"/>.</summary>
+        private readonly Dictionary<Guid, Separation> _parents = new Dictionary<Guid, Separation>();
+
+        /// <summary>Cambio en curso de la nave mirada por su versión nueva (ver <see cref="BeginSwap"/>).</summary>
+        private SpectateSwap _swap;
         private readonly List<TrackedVessel> _scratch = new List<TrackedVessel>();
 
         private GameScenes _scene = GameScenes.LOADING;
@@ -129,6 +139,22 @@ namespace MultiKerbal.Client.Vessels
         /// </summary>
         public void RequestLend(TrackedVessel tracked, string playerName) =>
             _send(new VesselLendRequestMessage { VesselId = tracked.Id, PlayerName = playerName ?? string.Empty }, Delivery.Reliable);
+
+        /// <summary>El dueño la devuelve a como la dejó (si se la han devuelto dañada). El servidor decide y avisa a todos.</summary>
+        public void RequestRestore(TrackedVessel tracked) =>
+            _send(new VesselRestoreRequestMessage { VesselId = tracked.Id }, Delivery.Reliable);
+
+        /// <summary>El kerbal va en una nave ajena (la pilota otro o nadie): lo que le pase aquí no cuenta.</summary>
+        public bool IsCrewOfRemoteVessel(string kerbal)
+        {
+            foreach (TrackedVessel tracked in _tracked.Values)
+            {
+                if (!IsLocal(tracked) && Array.Exists(tracked.Crew, name => string.Equals(name, kerbal, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+
+            return false;
+        }
 
         private bool HasPilotPermission(TrackedVessel tracked) =>
             VesselPermissions.CanPilot(tracked.OwnerName, tracked.Access, tracked.LentTo, _localPlayerName());
@@ -382,7 +408,7 @@ namespace MultiKerbal.Client.Vessels
                 return;
 
             Vessel active = FlightGlobals.ActiveVessel;
-            if (active == null || active.id != SpectatingId)
+            if (!IsSpectatedVessel(active))
                 return;
 
             TrackedVessel tracked = Find(SpectatingId);
@@ -451,6 +477,8 @@ namespace MultiKerbal.Client.Vessels
             GameEvents.onVesselTerminated.Add(OnVesselTerminated);
             GameEvents.onDockingComplete.Add(OnDockingComplete);
             GameEvents.onVesselsUndocking.Add(OnVesselsUndocking);
+            GameEvents.onPartDeCoupleNewVesselComplete.Add(OnDecoupleNewVessel);
+            GameEvents.onCrewOnEva.Add(OnCrewOnEva);
             GameEvents.onPartCouple.Add(OnPartCouple);
             GameEvents.onCrewBoardVessel.Add(OnPartCouple);
             GameEvents.onGameSceneLoadRequested.Add(OnSceneLoadRequested);
@@ -468,6 +496,8 @@ namespace MultiKerbal.Client.Vessels
             GameEvents.onVesselTerminated.Remove(OnVesselTerminated);
             GameEvents.onDockingComplete.Remove(OnDockingComplete);
             GameEvents.onVesselsUndocking.Remove(OnVesselsUndocking);
+            GameEvents.onPartDeCoupleNewVesselComplete.Remove(OnDecoupleNewVessel);
+            GameEvents.onCrewOnEva.Remove(OnCrewOnEva);
             GameEvents.onPartCouple.Remove(OnPartCouple);
             GameEvents.onCrewBoardVessel.Remove(OnPartCouple);
             GameEvents.onGameSceneLoadRequested.Remove(OnSceneLoadRequested);
@@ -549,6 +579,7 @@ namespace MultiKerbal.Client.Vessels
                 SpawnRemoteVessels(now);
             }
 
+            UpdateSwap(now);
             CheckSpectate();
             GuardTrackingStationButtons();
             TrackActiveVessel();
@@ -580,7 +611,7 @@ namespace MultiKerbal.Client.Vessels
             }
 
             Vessel active = FlightGlobals.ActiveVessel;
-            if (tracked != null && LiveVessel(tracked) != null && (active == null || active.id == SpectatingId))
+            if (tracked != null && LiveVessel(tracked) != null && (active == null || IsSpectatedVessel(active)))
                 return;
 
             ClearSpectate();
@@ -677,6 +708,7 @@ namespace MultiKerbal.Client.Vessels
                 tracked.Vessel = null;
             }
 
+            _swap = null; // La escena se va: la copia nueva se va con ella.
             _scene = scene;
             _sceneEnteredAt = now;
             _reconciled = false;
@@ -695,6 +727,8 @@ namespace MultiKerbal.Client.Vessels
             tracked.OwnerName = message.OwnerName ?? string.Empty;
             tracked.Access = message.Access;
             tracked.LentTo = message.LentTo ?? string.Empty;
+            tracked.Crew = message.Crew ?? new string[0];
+            tracked.Restorable = message.Restorable;
             SetController(tracked, message.ControllerId);
             if (IsLocal(tracked))
                 return;
@@ -762,6 +796,7 @@ namespace MultiKerbal.Client.Vessels
             tracked.OwnerName = message.OwnerName ?? string.Empty;
             tracked.Access = message.Access;
             tracked.LentTo = message.LentTo ?? string.Empty;
+            tracked.Restorable = message.Restorable;
         }
 
         private void SetController(TrackedVessel tracked, int controllerId)
@@ -841,17 +876,20 @@ namespace MultiKerbal.Client.Vessels
             int localPlayerId = _localPlayerId();
             foreach (Vessel vessel in FlightGlobals.Vessels.ToList())
             {
-                if (!IsSyncable(vessel) || _removed.Contains(vessel.id))
+                if (!IsSyncable(vessel) || _removed.Contains(vessel.id) || (_swap != null && vessel == _swap.Replacement))
                     continue;
 
                 if (!_tracked.TryGetValue(vessel.id, out TrackedVessel tracked))
                 {
-                    // Nave nueva en esta partida (lanzamiento, separación de etapas, EVA, bandera): se publica y es nuestra.
+                    // Nave nueva en esta partida (lanzamiento, separación de etapas, EVA, bandera): se publica y la
+                    // pilotamos. Si salió de una nave ajena, el servidor la deja a nombre de su dueño.
                     tracked = GetOrTrack(vessel.id);
                     tracked.ControllerId = localPlayerId;
                     tracked.OwnerName = _localPlayerName();
                     tracked.Access = _defaultAccess();
                     tracked.Vessel = vessel;
+                    tracked.ParentId = _parents.TryGetValue(vessel.id, out Separation separation) ? separation.ParentId : Guid.Empty;
+                    _parents.Remove(vessel.id);
                     Publish(tracked, vessel, now);
                     continue;
                 }
@@ -893,10 +931,12 @@ namespace MultiKerbal.Client.Vessels
                     Access = tracked.Access,
                     VesselName = tracked.Name,
                     Crew = VesselSpawner.CrewOf(vessel),
+                    ParentId = tracked.ParentId,
                     StructureVersion = tracked.StructureVersion,
                     Data = data,
                 },
                 Delivery.Reliable);
+            tracked.ParentId = Guid.Empty; // Solo cuenta al crearla.
         }
 
         private static byte[] TryEncode(Vessel vessel)
@@ -1084,10 +1124,13 @@ namespace MultiKerbal.Client.Vessels
                     if (existing == FlightGlobals.ActiveVessel)
                     {
                         // La nave activa no se puede quitar de la escena. Si es la que miramos y ha cambiado (etapas,
-                        // acoplamiento...), se vuelve a cargar el vuelo alrededor de la nueva (y ya no se sigue: la escena
-                        // está cambiando). La que pilotamos no se recarga.
+                        // acoplamiento...), se cambia por su versión nueva sin recargar; si no se puede, se recarga el
+                        // vuelo alrededor de ella (y ya no se sigue: la escena está cambiando). La que pilotamos no se recarga.
                         if (IsSpectating(existing))
                         {
+                            if (_swap != null || BeginSwap(tracked))
+                                continue; // Se está cambiando por la versión nueva (ver UpdateSwap).
+
                             ReloadSpectated(tracked);
                             return;
                         }
@@ -1175,6 +1218,105 @@ namespace MultiKerbal.Client.Vessels
             string text = DescribeCannotPilot(tracked);
             ScreenMessages.PostScreenMessage(text.Replace("<", "‹"), NoticeSeconds, ScreenMessageStyle.UPPER_CENTER);
             ReturnToOwnVessel();
+        }
+
+        /// <summary>La nave que se mira, o la copia nueva que la está sustituyendo.</summary>
+        private bool IsSpectatedVessel(Vessel vessel) =>
+            vessel != null && (IsSpectating(vessel) || (_swap != null && vessel == _swap.Replacement));
+
+        /// <summary>
+        /// La nave mirada ha cambiado (soltó una etapa, se acopló...) sin recargar el vuelo: se crea su versión nueva al
+        /// lado, con otro identificador para que no choque con la vieja; cuando KSP la carga se le pasa la cámara, se quita
+        /// la vieja y la nueva toma el identificador de verdad (<see cref="UpdateSwap"/>). Si algo falla, se recarga el vuelo.
+        /// </summary>
+        private bool BeginSwap(TrackedVessel tracked)
+        {
+            try
+            {
+                DecodedVessel decoded = VesselCodec.Decode(tracked.Proto);
+                Guid temporaryId = Guid.NewGuid();
+                decoded.VesselNode.SetValue("pid", temporaryId.ToString("N"), true);
+                Vessel replacement = VesselSpawner.Spawn(decoded, out string error, besideItsCopy: true);
+                if (replacement == null)
+                {
+                    ClientLog.Warn($"No se pudo crear la versión nueva de \"{tracked.Name}\": {error}");
+                    return false;
+                }
+
+                VesselState.MakePuppet(replacement);
+                if (tracked.LastUpdate != null)
+                    VesselState.Apply(replacement, tracked.LastUpdate);
+
+                _swap = new SpectateSwap(tracked, replacement, tracked.ProtoVersion, LocalClock.Now + SwapTimeoutSeconds);
+                ClientLog.Info($"\"{tracked.Name}\" ha cambiado: cambiando la copia mirada sin recargar el vuelo");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ClientLog.Warn($"No se pudo preparar la versión nueva de \"{tracked.Name}\": {ex.Message}");
+                return false;
+            }
+        }
+
+        private void UpdateSwap(double now)
+        {
+            SpectateSwap swap = _swap;
+            if (swap == null)
+                return;
+
+            TrackedVessel tracked = swap.Tracked;
+            Vessel replacement = swap.Replacement;
+            bool stillWatching = SpectatingId == tracked.Id && Find(tracked.Id) == tracked && !IsLocal(tracked);
+            bool alive = replacement != null && replacement.state != Vessel.State.DEAD;
+            if (!stillWatching || !alive || now > swap.Deadline)
+            {
+                AbortSwap(stillWatching && tracked.ProtoVersion == swap.Version);
+                return;
+            }
+
+            // Si mientras tanto llegó otra versión, se empieza de nuevo con ella.
+            if (tracked.ProtoVersion != swap.Version)
+            {
+                AbortSwap(false);
+                return;
+            }
+
+            if (!replacement.loaded)
+                return;
+
+            Vessel old = FlightGlobals.ActiveVessel;
+            if (old != replacement && !FlightGlobals.ForceSetActiveVessel(replacement))
+            {
+                AbortSwap(true);
+                return;
+            }
+
+            if (FlightGlobals.ActiveVessel != replacement)
+                return; // KSP cambia de nave en el siguiente frame: se termina entonces.
+
+            _swap = null;
+            Vessel previous = old != replacement ? old : FlightGlobals.FindVessel(tracked.Id);
+            if (previous != null && previous != replacement && previous.id == tracked.Id)
+                RemoveSilently(previous, crewMoved: true);
+
+            replacement.id = tracked.Id;
+            if (replacement.protoVessel != null)
+                replacement.protoVessel.vesselID = tracked.Id;
+            tracked.Vessel = replacement;
+            tracked.SpawnedVersion = swap.Version;
+            tracked.Motion.Clear();
+            ClientLog.Info($"Copia mirada cambiada: {tracked.Name}");
+        }
+
+        /// <summary>Se quita la copia nueva y, si se sigue mirando la misma versión, se recarga el vuelo como antes.</summary>
+        private void AbortSwap(bool reload)
+        {
+            SpectateSwap swap = _swap;
+            _swap = null;
+            if (swap.Replacement != null && swap.Replacement.state != Vessel.State.DEAD && swap.Replacement != FlightGlobals.ActiveVessel)
+                RemoveSilently(swap.Replacement, crewMoved: true);
+            if (reload)
+                ReloadSpectated(swap.Tracked);
         }
 
         private void ReloadSpectated(TrackedVessel tracked)
@@ -1279,7 +1421,7 @@ namespace MultiKerbal.Client.Vessels
                 if (update.UniversalTime > tracked.Motion.LatestUniversalTime)
                 {
                     tracked.Motion.Add(
-                        update.BodyIndex, update.UniversalTime, VesselState.PoseOf(update), universalTime, now, warpRate, body.Radius);
+                        update.BodyIndex, update.UniversalTime, VesselState.PoseOf(update), universalTime, now, warpRate, body.Radius, update.IsOnSurface);
                 }
 
                 if (!vessel.packed)
@@ -1288,12 +1430,13 @@ namespace MultiKerbal.Client.Vessels
             }
         }
 
-        private void RemoveSilently(Vessel vessel)
+        /// <param name="crewMoved">Su tripulación sigue en otra copia de la misma nave: no se toca su estado.</param>
+        private void RemoveSilently(Vessel vessel, bool crewMoved = false)
         {
             _suppressDestroyEvents++;
             try
             {
-                VesselSpawner.Remove(vessel);
+                VesselSpawner.Remove(vessel, crewMoved);
             }
             finally
             {
@@ -1390,7 +1533,33 @@ namespace MultiKerbal.Client.Vessels
         }
 
         /// <summary>Al desacoplar aparece una nave nueva: se publica enseguida para que no tarde en salir en los demás.</summary>
-        private void OnVesselsUndocking(Vessel from, Vessel to) => _nextScan = 0;
+        private void OnVesselsUndocking(Vessel from, Vessel to)
+        {
+            _nextScan = 0;
+            RememberSeparation(from, to);
+        }
+
+        /// <summary>
+        /// Una nave que sale de otra (etapa, desacople, desacoplamiento, kerbal en EVA): se apunta de cuál salió para
+        /// decírselo al servidor al publicarla. Se apuntan las dos direcciones porque KSP no siempre dice cuál es la nueva;
+        /// solo se usa la de la que aún no se ha publicado.
+        /// </summary>
+        private void RememberSeparation(Vessel a, Vessel b)
+        {
+            if (a == null || b == null || a == b)
+                return;
+
+            double until = LocalClock.Now + SeparationMemorySeconds;
+            _parents[b.id] = new Separation(a.id, until);
+            _parents[a.id] = new Separation(b.id, until);
+            foreach (Guid stale in _parents.Where(p => p.Value.Until < LocalClock.Now).Select(p => p.Key).ToList())
+                _parents.Remove(stale);
+        }
+
+        private void OnDecoupleNewVessel(Vessel original, Vessel created) => RememberSeparation(original, created);
+
+        private void OnCrewOnEva(GameEvents.FromToAction<Part, Part> action) =>
+            RememberSeparation(action.from != null ? action.from.vessel : null, action.to != null ? action.to.vessel : null);
 
         private void OnVesselRecovered(ProtoVessel proto, bool quick) => OnVesselGone(proto, VesselRemoveReason.Recovered);
 
@@ -1427,6 +1596,41 @@ namespace MultiKerbal.Client.Vessels
             _tracked.Remove(tracked.Id);
             _removed.Add(tracked.Id);
             _send(new VesselRemoveMessage { VesselId = tracked.Id, Reason = reason }, Delivery.Reliable);
+        }
+
+        /// <summary>De qué nave salió una y hasta cuándo se recuerda.</summary>
+        private struct Separation
+        {
+            public Separation(Guid parentId, double until)
+            {
+                ParentId = parentId;
+                Until = until;
+            }
+
+            public Guid ParentId { get; }
+
+            public double Until { get; }
+        }
+
+        private sealed class SpectateSwap
+        {
+            public SpectateSwap(TrackedVessel tracked, Vessel replacement, int version, double deadline)
+            {
+                Tracked = tracked;
+                Replacement = replacement;
+                Version = version;
+                Deadline = deadline;
+            }
+
+            public TrackedVessel Tracked { get; }
+
+            /// <summary>La copia nueva, con un identificador temporal hasta que sustituye a la vieja.</summary>
+            public Vessel Replacement { get; }
+
+            /// <summary>Versión de la definición con la que se creó.</summary>
+            public int Version { get; }
+
+            public double Deadline { get; }
         }
     }
 }

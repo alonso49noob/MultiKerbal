@@ -99,9 +99,11 @@ If your mods do not match the server's, a list shows what is missing before the 
 
 **Watch:** the *Watch* button next to a vessel you are not flying takes the camera to it, wherever it is, with the controls locked. If it is far away, the flight scene loads around it; if you were flying, your vessel must be stable first: landed and still, or in orbit with the engines off. *Stop watching* takes you back to your vessel or to the scene you came from.
 
-**Lending:** the owner can lend a vessel (or a kerbal on EVA) to a player, who can fly it even if private but cannot destroy, recover or delete it, and take it back at any time. Destroying, recovering or deleting someone else's vessel needs its owner's permission (public access) even while you fly it; if you crash it, it goes back where it was when you took it. A kerbal can't be aboard two players' vessels at once.
+**Lending:** the owner can lend a vessel (or a kerbal on EVA) to a player, who can fly it even if private but cannot destroy, recover or delete it, and take it back at any time. Destroying, recovering or deleting someone else's vessel needs its owner's permission (public access) even while you fly it; if you crash it, it goes back to how its owner left it. A kerbal can't be aboard two players' vessels at once.
 
-**Shared progress (experimental):** with `GameMode` set to `science` or `career`, science and technologies (plus funds and reputation in career) are shared by everyone.
+**Shared progress (experimental):** with `GameMode` set to `science` or `career`, science, technologies and experiments already done are shared by everyone. In career also funds, reputation, purchased parts, facility upgrades and contracts: offers are per player, but an accepted contract is everyone's and whoever completes it first gets paid. In any mode, a kerbal hired or killed is so for everyone.
+
+Stages dropped from someone else's vessel stay the owner's (you can still lose them). If a vessel comes back damaged, its owner can *Restore it to how you left it* while nobody flies it.
 
 ## Server settings
 

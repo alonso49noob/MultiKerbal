@@ -22,8 +22,8 @@ public sealed class PuppetMotionTests
         Rotation = rotation ?? Rotation.Identity,
     };
 
-    private static void Add(PuppetMotion motion, double sampleUt, SurfacePose pose, double ut, double realTime, double warp = 1) =>
-        motion.Add(Kerbin, sampleUt, pose, ut, realTime, warp, KerbinRadius);
+    private static void Add(PuppetMotion motion, double sampleUt, SurfacePose pose, double ut, double realTime, double warp = 1, bool onSurface = false) =>
+        motion.Add(Kerbin, sampleUt, pose, ut, realTime, warp, KerbinRadius, onSurface);
 
     [Fact]
     public void SingleState_IsShownAsIs()
@@ -63,6 +63,19 @@ public sealed class PuppetMotionTests
         SurfacePose pose = motion.Current(100 + Step + 5, Later, 1);
 
         Assert.Equal(0.001 + (0.001 * PuppetMotion.MaxAheadRealSeconds / Step), pose.Latitude, 6);
+    }
+
+    [Fact]
+    public void LandedVessels_AreCarriedForwardLess()
+    {
+        // En el suelo se frena de golpe: se adelanta como mucho 0,1 s para no pasarse.
+        var motion = new PuppetMotion();
+        Add(motion, 100, At(0), 100, 0, onSurface: true);
+        Add(motion, 100 + Step, At(0.001), 100 + Step, 10, onSurface: true);
+
+        SurfacePose pose = motion.Current(100 + Step + 5, Later, 1);
+
+        Assert.Equal(0.001 + (0.001 * PuppetMotion.MaxAheadSurfaceRealSeconds / Step), pose.Latitude, 6);
     }
 
     [Fact]
@@ -181,7 +194,7 @@ public sealed class PuppetMotionTests
     {
         var motion = new PuppetMotion();
         Add(motion, 100, At(0), 100, 0);
-        motion.Add(Kerbin + 1, 100.5, At(0.0001), 100.5, 10, 1, KerbinRadius);
+        motion.Add(Kerbin + 1, 100.5, At(0.0001), 100.5, 10, 1, KerbinRadius, false);
 
         Assert.Equal(0.0001, motion.Current(100.5, 10, 1).Latitude, 9);
     }

@@ -53,6 +53,10 @@ public sealed partial class ServerHost
         if (reason == VesselRemoveReason.Merged)
             return inHand;
 
+        // Las etapas que suelta uno al volar una nave ajena siguen siendo del dueño, pero las puede perder él.
+        if (reason == VesselRemoveReason.Destroyed && inHand && vessel.Checkpoint == null && VesselPermissions.IsOwner(vessel.Creator, player.Name))
+            return true;
+
         return (inHand || vessel.ControllerId == 0) && VesselPermissions.CanRemove(vessel.OwnerName, vessel.Access, player.Name);
     }
 
@@ -65,6 +69,7 @@ public sealed partial class ServerHost
         LentTo = vessel.LentTo,
         VesselName = vessel.Name,
         Crew = vessel.Crew,
+        Restorable = vessel.Checkpoint != null,
         StructureVersion = vessel.StructureVersion,
         Data = vessel.Data,
     };
@@ -75,6 +80,7 @@ public sealed partial class ServerHost
         OwnerName = vessel.OwnerName,
         Access = vessel.Access,
         LentTo = vessel.LentTo,
+        Restorable = vessel.Checkpoint != null,
     };
 
     private static string DescribeOwner(StoredVessel vessel)
@@ -144,8 +150,10 @@ public sealed partial class ServerHost
         vessel ??= _vessels.GetOrCreate(message.VesselId);
         if (created)
         {
+            vessel.Creator = player.Name;
             vessel.OwnerName = player.Name;
             vessel.Access = VesselPermissions.IsValid(message.Access) ? message.Access : VesselAccess.Shared;
+            InheritOwner(vessel, message.ParentId, player);
         }
 
         bool controllerChanged = vessel.ControllerId != player.Info.Id;
@@ -166,6 +174,23 @@ public sealed partial class ServerHost
             _network.Send(player.Connection, ToOwnerMessage(vessel));
             Log.Info($"{player.Name} ha publicado la nave \"{vessel.Name}\" ({VesselPermissions.Describe(vessel.Access)})");
         }
+    }
+
+    /// <summary>
+    /// Lo que se separa de una nave ajena (etapas, desacoples, un kerbal que sale en EVA) sigue siendo de su dueño, con
+    /// el mismo acceso; si se la habían prestado a quien la vuela, también le queda prestado. Así nadie se queda con
+    /// las piezas de otro por soltarlas.
+    /// </summary>
+    private void InheritOwner(StoredVessel vessel, Guid parentId, Player player)
+    {
+        StoredVessel? parent = parentId == Guid.Empty ? null : _vessels.Get(parentId);
+        if (parent == null || !VesselPermissions.HasOwner(parent.OwnerName) || VesselPermissions.IsOwner(parent.OwnerName, player.Name))
+            return;
+
+        vessel.OwnerName = parent.OwnerName;
+        vessel.Access = parent.Access;
+        if (VesselPermissions.IsBorrower(parent.LentTo, player.Name))
+            vessel.LentTo = parent.LentTo;
     }
 
     /// <summary>Nombres válidos, sin repetir y sin pasar del máximo.</summary>
@@ -213,15 +238,72 @@ public sealed partial class ServerHost
     }
 
     /// <summary>
-    /// Al tomar el control alguien que no podría destruirla, se guarda cómo estaba: si la destruye, vuelve ahí
-    /// (te la prestan y, si la rompes, aparece donde la cogiste).
+    /// Al tomar el control alguien sin permiso para destruirla, se guarda cómo estaba (si no había ya un punto: cuenta
+    /// cómo la dejó su dueño, no cómo la dejó el último que la usó). Si la destruye, vuelve ahí; y el dueño puede
+    /// devolverla ahí si se la dejan dañada. Si la toma alguien con permiso (el dueño), la da por buena tal como está.
     /// </summary>
-    private static void TakeCheckpoint(StoredVessel vessel, Player newPilot)
+    private void TakeCheckpoint(StoredVessel vessel, Player newPilot)
     {
-        vessel.Checkpoint = VesselPermissions.CanRemove(vessel.OwnerName, vessel.Access, newPilot.Name) || vessel.Data.Length == 0
-            ? null
-            : new VesselCheckpoint(vessel.Data, vessel.Crew, vessel.LastUpdate);
+        bool hadCheckpoint = vessel.Checkpoint != null;
+        if (VesselPermissions.CanRemove(vessel.OwnerName, vessel.Access, newPilot.Name))
+            vessel.Checkpoint = null;
+        else if (vessel.Checkpoint == null && vessel.Data.Length > 0)
+            vessel.Checkpoint = new VesselCheckpoint(vessel.Data, vessel.Crew, vessel.LastUpdate);
+
+        if (hadCheckpoint == (vessel.Checkpoint != null))
+            return;
+
         vessel.Dirty = true;
+        BroadcastReliable(ToOwnerMessage(vessel)); // Para que el dueño vea (o deje de ver) "Devolverla a como la dejaste".
+    }
+
+    /// <summary>
+    /// Devuelve la nave a su punto de restauración: definición, tripulación y estado. Sube su versión de estructura
+    /// para que todos la recarguen, y los kerbals que murieron en ella vuelven a estar vivos.
+    /// </summary>
+    private void RestoreCheckpoint(StoredVessel vessel)
+    {
+        VesselCheckpoint checkpoint = vessel.Checkpoint!;
+        vessel.Data = checkpoint.Data;
+        vessel.Crew = checkpoint.Crew;
+        vessel.LastUpdate = checkpoint.LastUpdate;
+        vessel.StructureVersion++;
+        vessel.Checkpoint = null;
+        vessel.Dirty = true;
+
+        KerbalInfo[] revived = checkpoint.Crew
+            .Select(name => _roster.Revive(name))
+            .Where(kerbal => kerbal != null)
+            .Select(kerbal => kerbal!.Value)
+            .ToArray();
+        if (revived.Length > 0)
+            BroadcastReliable(new KerbalsMessage { Kerbals = revived });
+
+        foreach (Player other in AuthenticatedPlayers())
+            SendVessel(other, vessel);
+    }
+
+    /// <summary>
+    /// El dueño devuelve su nave a como la dejó antes de que la usara alguien sin permiso para destruirla. Solo si
+    /// nadie la está pilotando (si la tiene alguien prestada, primero hay que recuperarla).
+    /// </summary>
+    private void OnVesselRestoreRequest(Player player, VesselRestoreRequestMessage request)
+    {
+        StoredVessel? vessel = _vessels.Get(request.VesselId);
+        if (vessel == null)
+            return;
+
+        if (!VesselPermissions.IsOwner(vessel.OwnerName, player.Name) || vessel.Checkpoint is not { Data.Length: > 0 } || vessel.ControllerId != 0)
+        {
+            _network.Send(player.Connection, ToOwnerMessage(vessel));
+            return;
+        }
+
+        RestoreCheckpoint(vessel);
+        SendSystemChat(Lang.T(
+            $"{player.Name} ha devuelto \"{vessel.Name}\" a como la dejó",
+            $"{player.Name} restored \"{vessel.Name}\" to how they left it"));
+        Log.Info($"{player.Name} ha restaurado \"{vessel.Name}\"");
     }
 
     private void OnVesselUpdate(Player player, VesselUpdateMessage message)
@@ -264,28 +346,17 @@ public sealed partial class ServerHost
     private void RefuseRemoval(StoredVessel vessel, Player player, VesselRemoveReason reason)
     {
         bool wasPilot = vessel.ControllerId == player.Info.Id;
-        bool restored = false;
-        if (reason == VesselRemoveReason.Destroyed && wasPilot && vessel.Checkpoint is { Data.Length: > 0 } checkpoint)
-        {
-            vessel.Data = checkpoint.Data;
-            vessel.Crew = checkpoint.Crew;
-            vessel.LastUpdate = checkpoint.LastUpdate;
-            vessel.StructureVersion++; // Así los demás la recargan en vez de seguir con la versión dañada.
-            restored = true;
-        }
-
+        bool restored = reason == VesselRemoveReason.Destroyed && wasPilot && vessel.Checkpoint is { Data.Length: > 0 };
         if (wasPilot)
         {
             vessel.ControllerId = 0;
-            vessel.Checkpoint = null;
             SetCopilot(vessel, 0, false);
         }
 
         vessel.Dirty = true;
         if (restored)
         {
-            foreach (Player other in AuthenticatedPlayers())
-                SendVessel(other, vessel);
+            RestoreCheckpoint(vessel);
         }
         else
         {
@@ -297,8 +368,8 @@ public sealed partial class ServerHost
         string owner = VesselPermissions.HasOwner(vessel.OwnerName) ? vessel.OwnerName : "?";
         string text = restored
             ? Lang.T(
-                $"\"{vessel.Name}\" es de {owner}: sin su permiso no se puede destruir. Ha vuelto a donde estaba cuando la tomaste.",
-                $"\"{vessel.Name}\" belongs to {owner}: it cannot be destroyed without their permission. It is back where it was when you took it.")
+                $"\"{vessel.Name}\" es de {owner}: sin su permiso no se puede destruir. Ha vuelto a como la dejó su dueño.",
+                $"\"{vessel.Name}\" belongs to {owner}: it cannot be destroyed without their permission. It is back to how its owner left it.")
             : Lang.T(
                 $"\"{vessel.Name}\" es de {owner}: sin su permiso no puedes destruirla, recuperarla ni borrarla.",
                 $"\"{vessel.Name}\" belongs to {owner}: you cannot destroy, recover or delete it without their permission.");
@@ -370,7 +441,6 @@ public sealed partial class ServerHost
     private void RevokeControl(StoredVessel vessel)
     {
         vessel.ControllerId = 0;
-        vessel.Checkpoint = null;
         SetCopilot(vessel, 0, false);
         BroadcastReliable(new VesselControlMessage { VesselId = vessel.Id, ControllerId = 0 });
     }
@@ -391,7 +461,6 @@ public sealed partial class ServerHost
         else if (!request.Acquire && vessel.ControllerId == player.Info.Id)
         {
             vessel.ControllerId = 0;
-            vessel.Checkpoint = null;
         }
 
         var control = new VesselControlMessage { VesselId = vessel.Id, ControllerId = vessel.ControllerId };

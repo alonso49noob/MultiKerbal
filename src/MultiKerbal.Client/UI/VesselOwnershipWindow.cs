@@ -93,6 +93,7 @@ namespace MultiKerbal.Client.UI
             else if (mine)
             {
                 DrawAccessChoice(tracked);
+                DrawRestore(tracked);
                 GUILayout.Space(8f);
                 DrawLend(tracked);
                 GUILayout.Space(8f);
@@ -193,6 +194,39 @@ namespace MultiKerbal.Client.UI
                             "Since you are flying it, you also hand it over. They can fly it even if private, but not destroy or recover it.")
                     : Loc.T("Podrá pilotarla aunque sea privada, pero no destruirla ni recuperarla. Si la destruye, vuelve a donde estaba.",
                             "They can fly it even if private, but not destroy or recover it. If they destroy it, it goes back where it was."),
+                UiStyles.Muted);
+        }
+
+        /// <summary>
+        /// La ha usado alguien sin permiso para destruirla: el dueño puede devolverla a como la dejó (por ejemplo, si se
+        /// la devuelven sin piezas). Solo mientras nadie la pilote; al volver a pilotarla él, la da por buena.
+        /// </summary>
+        private void DrawRestore(TrackedVessel tracked)
+        {
+            if (!tracked.Restorable)
+                return;
+
+            GUILayout.Space(8f);
+            if (tracked.ControllerId != 0)
+            {
+                GUILayout.Label(
+                    Loc.T("Cuando nadie la pilote podrás devolverla a como la dejaste.",
+                          "Once nobody is flying it you can restore it to how you left it."),
+                    UiStyles.Muted);
+                return;
+            }
+
+            if (ConfirmButton(
+                    "restaurar",
+                    Loc.T("Devolverla a como la dejaste", "Restore it to how you left it"),
+                    Loc.T("¿Seguro? Se deshace lo que hicieron con ella. Pulsa otra vez", "Are you sure? What others did with it is undone. Click again")))
+            {
+                _core.Vessels.RequestRestore(tracked);
+            }
+
+            GUILayout.Label(
+                Loc.T("La han usado otros. Si vuelves a pilotarla tú, se queda como está.",
+                      "Others have used it. If you fly it again yourself, it stays as it is."),
                 UiStyles.Muted);
         }
 

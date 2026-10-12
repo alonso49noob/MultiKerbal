@@ -45,9 +45,13 @@ namespace MultiKerbal.Common.Messages
         // Naves: préstamos y rechazos
         VesselReject = 73,
         VesselLendRequest = 74,
+        VesselRestoreRequest = 75,
 
         // Progreso compartido
         ProgressState = 80,
         ProgressChange = 81,
+        ScienceSubjects = 82,
+        Contracts = 83,
+        Kerbals = 84,
     }
 }

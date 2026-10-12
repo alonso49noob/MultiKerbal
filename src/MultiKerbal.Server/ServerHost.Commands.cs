@@ -193,13 +193,15 @@ public sealed partial class ServerHost
 
     private void ShowProgress()
     {
+        Log.Info($"Plantel compartido: {_roster.Count} kerbal(s) con historia");
         if (_progress.Mode == GameMode.Sandbox)
         {
-            Log.Info("Partida sandbox: no hay progreso compartido (GameMode en server.json)");
+            Log.Info("Partida sandbox: no hay más progreso compartido (GameMode en server.json)");
             return;
         }
 
-        Log.Info($"Partida {GameModes.Describe(_progress.Mode)}: fondos {_progress.Funds:N0}, ciencia {_progress.Science:0.#}, reputación {_progress.Reputation:0.#}, {_progress.Techs.Count} tecnología(s)");
+        Log.Info($"Partida {GameModes.Describe(_progress.Mode)}: fondos {_progress.Funds:N0}, ciencia {_progress.Science:0.#}, reputación {_progress.Reputation:0.#}");
+        Log.Info($"  {_progress.Techs.Count} tecnología(s), {_progress.SubjectCount} experimento(s) con ciencia, {_progress.Parts.Count} pieza(s) compradas, {_progress.ActiveContracts} contrato(s) activos");
     }
 
     private Player? FindPlayer(string name) =>

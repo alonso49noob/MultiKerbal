@@ -33,6 +33,15 @@ namespace MultiKerbal.Client.Vessels
         /// <summary>Jugador al que el dueño se la ha prestado (vacío = a nadie).</summary>
         public string LentTo { get; set; } = string.Empty;
 
+        /// <summary>Kerbals a bordo según el servidor (de las naves ajenas; las nuestras las sabe KSP).</summary>
+        public string[] Crew { get; set; } = new string[0];
+
+        /// <summary>Su dueño puede devolverla a como la dejó (alguien sin permiso para destruirla la ha usado).</summary>
+        public bool Restorable { get; set; }
+
+        /// <summary>Solo al publicarla por primera vez: la nave de la que se separó (vacío si ninguna).</summary>
+        public Guid ParentId { get; set; }
+
         public string Name { get; set; } = string.Empty;
 
         /// <summary>Última definición conocida (comprimida).</summary>

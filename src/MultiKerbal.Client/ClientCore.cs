@@ -62,6 +62,7 @@ namespace MultiKerbal.Client
                 () => MultiplayerWindow != null && MultiplayerWindow.ChatFocused,
                 (message, delivery) => Send(message, delivery));
             Progress = new ProgressSync(message => Send(message));
+            Roster = new RosterSync(message => Send(message), name => Vessels.IsCrewOfRemoteVessel(name));
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
             ModsWindow = new ModsWindow(this);
@@ -87,6 +88,8 @@ namespace MultiKerbal.Client
         public SharedControlSystem SharedControl { get; }
 
         public ProgressSync Progress { get; }
+
+        public RosterSync Roster { get; }
 
         /// <summary>Tipo de partida del servidor (con el que se crea la partida local).</summary>
         public GameMode GameMode { get; private set; }
@@ -212,6 +215,7 @@ namespace MultiKerbal.Client
             Vessels.Update();
             SharedControl.Update();
             Progress.Update();
+            Roster.Update();
         }
 
         public void OnGUI()
@@ -341,8 +345,13 @@ namespace MultiKerbal.Client
                 case VesselRejectMessage _:
                     Vessels.Handle(message);
                     break;
-                case ProgressStateMessage progress:
-                    Progress.Handle(progress);
+                case ProgressStateMessage _:
+                case ScienceSubjectsMessage _:
+                case ContractsMessage _:
+                    Progress.Handle(message);
+                    break;
+                case KerbalsMessage kerbals:
+                    Roster.Handle(kerbals);
                     break;
                 case VesselCopilotMessage _:
                 case VesselInputMessage _:
@@ -370,6 +379,7 @@ namespace MultiKerbal.Client
             ServerName = response.ServerName ?? string.Empty;
             GameMode = GameModes.IsValid(response.GameMode) ? response.GameMode : GameMode.Sandbox;
             Progress.Start(GameMode);
+            Roster.Start();
             StatusText = Loc.T($"Conectado a {ServerName}", $"Connected to {ServerName}");
             _nextPing = 0;
             _startGamePending = true;
@@ -461,6 +471,7 @@ namespace MultiKerbal.Client
             Vessels.Reset();
             SharedControl.Reset();
             Progress.Reset();
+            Roster.Reset();
             HandoverWindow.Clear();
             TimeSync.RequestHardSync();
             _status.Reset();

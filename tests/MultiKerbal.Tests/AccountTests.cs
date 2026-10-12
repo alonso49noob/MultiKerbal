@@ -187,7 +187,7 @@ public sealed class ProgressTests : IDisposable
         jeb.Send(new ProgressChangeMessage { Kind = ProgressKind.Funds, Amount = -1000 });
         bill.Send(new ProgressChangeMessage { Kind = ProgressKind.Funds, Amount = -500 });
         bill.Send(new ProgressChangeMessage { Kind = ProgressKind.Science, Amount = 12.5 });
-        bill.Send(new ProgressChangeMessage { Kind = ProgressKind.Tech, TechId = "basicRocketry" });
+        bill.Send(new ProgressChangeMessage { Kind = ProgressKind.Tech, Id = "basicRocketry" });
 
         // Los mensajes de dos jugadores pueden llegar en cualquier orden: se espera al estado con todo aplicado.
         ProgressStateMessage last = jeb.WaitFor<ProgressStateMessage>(m => m.Techs.Contains("basicRocketry") && m.Funds == 23_500);
@@ -235,7 +235,7 @@ public sealed class ProgressTests : IDisposable
     [InlineData("../evil", false)]
     public void TechIds_AreValidated(string id, bool valid)
     {
-        Assert.Equal(valid, ProgressSystem.IsValidTechId(id));
+        Assert.Equal(valid, ProgressSystem.IsValidId(id));
     }
 
     public void Dispose() => _server.Dispose();

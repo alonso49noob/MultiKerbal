@@ -22,6 +22,12 @@ namespace MultiKerbal.Common.Progress
 
         /// <summary>Tecnología investigada (su coste en ciencia llega aparte, como un cambio de ciencia).</summary>
         Tech = 3,
+
+        /// <summary>Pieza comprada en carrera (su precio llega aparte, como un cambio de fondos).</summary>
+        Part = 4,
+
+        /// <summary>Edificio mejorado: el nivel (0..1) va en Amount.</summary>
+        Facility = 5,
     }
 
     public static class GameModes
@@ -42,6 +48,8 @@ namespace MultiKerbal.Common.Progress
                     return SharesScience(mode);
                 case ProgressKind.Funds:
                 case ProgressKind.Reputation:
+                case ProgressKind.Part:
+                case ProgressKind.Facility:
                     return SharesMoney(mode);
                 default:
                     return false;

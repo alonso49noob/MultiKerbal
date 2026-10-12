@@ -26,6 +26,14 @@ namespace MultiKerbal.Common
 
         public const int MaxCrewPerVessel = 1000;
         public const int MaxTechNodes = 2000;
+        public const int MaxPurchasedParts = 10_000;
+        public const int MaxFacilities = 100;
+        public const int MaxScienceSubjects = 50_000;
+        public const int MaxContracts = 5_000;
+        public const int MaxKerbals = 5_000;
+
+        /// <summary>Definición de un contrato o un kerbal (nodo de KSP en texto).</summary>
+        public const int MaxNodeTextLength = 64 * 1024;
 
         /// <summary>Contraseña de la cuenta de cada jugador (no la del servidor).</summary>
         public const int MinAccountPasswordLength = 4;

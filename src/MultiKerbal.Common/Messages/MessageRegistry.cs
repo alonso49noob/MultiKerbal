@@ -36,8 +36,12 @@ namespace MultiKerbal.Common.Messages
             { MessageType.VesselAction, () => new VesselActionMessage() },
             { MessageType.VesselReject, () => new VesselRejectMessage() },
             { MessageType.VesselLendRequest, () => new VesselLendRequestMessage() },
+            { MessageType.VesselRestoreRequest, () => new VesselRestoreRequestMessage() },
             { MessageType.ProgressState, () => new ProgressStateMessage() },
             { MessageType.ProgressChange, () => new ProgressChangeMessage() },
+            { MessageType.ScienceSubjects, () => new ScienceSubjectsMessage() },
+            { MessageType.Contracts, () => new ContractsMessage() },
+            { MessageType.Kerbals, () => new KerbalsMessage() },
         };
 
         public static IEnumerable<MessageType> RegisteredTypes => Factories.Keys;
