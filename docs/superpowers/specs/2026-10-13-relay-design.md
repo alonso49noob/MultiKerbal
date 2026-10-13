@@ -135,7 +135,7 @@ Usa el mismo formato de tramas que el juego (`FrameCodec`), con tipos de mensaje
 
 ## 9. Compatibilidad y versión
 
-- El protocolo del juego pasa de **4 a 5**, por los mensajes nuevos que recibe el mod.
+- El protocolo del juego pasa de **5 a 6**, por los mensajes nuevos que recibe el mod. Ya estaba en 5 por los cambios de progreso compartido y cuentas, posteriores a la 0.1.1.
 - **Los mods 0.1.x no pueden entrar a servidores 0.2.0, ni al revés.** Reciben el aviso de versión incompatible que ya existe.
 - La versión de todo pasa a **0.2.0**, publicada primero como beta.
 - Los datos del juego por el relay **van sin cifrar**, como por IP. Se dirá en el README y en `docs/RELAY.md`.
@@ -169,7 +169,7 @@ Usa el mismo formato de tramas que el juego (`FrameCodec`), con tipos de mensaje
 4. **Juego:**
    - La consulta de estado y el control local.
    - Las ventanas: conexión, lista, Hospedar y el código dentro de la partida.
-   - El protocolo 5.
+   - El protocolo 6.
 5. **Puesta en marcha:**
    - El autor crea la cuenta de Oracle Cloud y DuckDNS.
    - Instalación por SSH como servicio `systemd`, con los puertos abiertos.
