@@ -53,5 +53,31 @@ namespace MultiKerbal.Common.Messages
         ScienceSubjects = 82,
         Contracts = 83,
         Kerbals = 84,
+
+        // Hospedaje: estado y control del servidor (lo usa el mod, no el relay)
+        ServerStatusRequest = 100,
+        ServerStatusResponse = 101,
+        ServerControl = 102,
+        ServerCode = 103,
+
+        // Relay: servidor ↔ relay y jugador ↔ relay
+        RelayRegister = 200,
+        RelayRegistered = 201,
+        RelayRejected = 202,
+        RelayHeartbeat = 203,
+        RelayReachability = 204,
+        RelayRecheck = 205,
+        RelayIncoming = 206,
+        RelayAttach = 207,
+        RelayUdpHello = 208,
+        RelayUdpToken = 209,
+        RelayProbe = 210,
+        RelayProbeReply = 211,
+        RelayLookup = 212,
+        RelayLookupResult = 213,
+        RelayJoin = 214,
+        RelayJoinResult = 215,
+        RelayListRequest = 216,
+        RelayListResponse = 217,
     }
 }

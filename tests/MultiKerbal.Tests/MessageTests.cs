@@ -56,6 +56,29 @@ public class MessageTests
             Assert.Equal(type, MessageRegistry.Create(type)!.Type);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(33)]
+    public void RelayRegister_RejectsKeysThatAreNot32Bytes(int keyLength)
+    {
+        var message = new RelayRegisterMessage { RelayVersion = 1, Key = new byte[keyLength] };
+        byte[] frame = FrameCodec.EncodeTcp(message);
+        using var stream = new MemoryStream(frame);
+
+        Assert.Throws<MultiKerbal.Common.Serialization.ProtocolException>(() => FrameCodec.ReadTcpFrame(stream, new byte[FrameCodec.TcpHeaderSize], out _));
+    }
+
+    [Fact]
+    public void RelayListResponse_RejectsMoreThanTheMaximumEntries()
+    {
+        var writer = new MultiKerbal.Common.Serialization.PacketWriter();
+        writer.WriteInt32(MultiKerbal.Common.ProtocolInfo.MaxListedServers + 1);
+        var reader = new MultiKerbal.Common.Serialization.PacketReader(writer.ToArray());
+
+        Assert.Throws<MultiKerbal.Common.Serialization.ProtocolException>(() => new RelayListResponseMessage().Read(reader));
+    }
+
     [Fact]
     public void DefaultInstances_RoundTrip()
     {
@@ -217,5 +240,96 @@ internal static class SampleMessages
             WheelThrottle = -0.2f,
         };
         yield return new VesselActionMessage { VesselId = Guid.NewGuid(), Action = VesselAction.Custom07 };
+
+        // Relay
+        var relayInfo = new RelayServerInfo
+        {
+            Name = "Programa espacial de Val",
+            Players = 3,
+            MaxPlayers = 8,
+            HasPassword = true,
+            IsPublic = true,
+            GameProtocol = 6,
+            ModVersion = "0.7.1",
+        };
+        yield return new RelayRegisterMessage
+        {
+            RelayVersion = 1,
+            Key = Enumerable.Range(1, 32).Select(i => (byte)(i * 7)).ToArray(),
+            GamePort = 6750,
+            Info = relayInfo,
+        };
+        yield return new RelayRegisteredMessage { Code = "K7MQ2P", UdpSecret = ulong.MaxValue - 11 };
+        yield return new RelayRejectedMessage { Reason = "Demasiados servidores desde esta dirección" };
+        yield return new RelayHeartbeatMessage { Info = relayInfo };
+        yield return new RelayReachabilityMessage { Tcp = true, Udp = false };
+        yield return new RelayRecheckMessage();
+        yield return new RelayIncomingMessage { SessionId = 123_456_789_012L, Secret = 0xFEEDFACECAFEBEEFUL, ClientAddress = "203.0.113.9:51234" };
+        yield return new RelayAttachMessage { RelayVersion = 1, SessionId = 123_456_789_012L, Secret = 0xFEEDFACECAFEBEEFUL };
+        yield return new RelayUdpHelloMessage { UdpSecret = 0x0123456789ABCDEFUL };
+        yield return new RelayUdpTokenMessage { SessionId = 77, Token = 0xA1B2C3D4E5F60718UL };
+        yield return new RelayProbeMessage { Nonce = 0x1122334455667788UL };
+        yield return new RelayProbeReplyMessage { Nonce = 0x1122334455667788UL };
+        yield return new RelayLookupMessage { RelayVersion = 1, Code = "K7MQ2P" };
+        yield return new RelayLookupResultMessage
+        {
+            Found = true,
+            Name = "Programa espacial de Val",
+            GameProtocol = 6,
+            ModVersion = "0.7.1",
+            DirectHost = "198.51.100.20",
+            DirectPort = 6750,
+            Error = "ninguno",
+        };
+        yield return new RelayJoinMessage { RelayVersion = 1, Code = "K7MQ2P" };
+        yield return new RelayJoinResultMessage { Ok = true, Error = "sin error" };
+        yield return new RelayListRequestMessage { RelayVersion = 1 };
+        yield return new RelayListResponseMessage
+        {
+            Servers =
+            [
+                new PublicServerEntry
+                {
+                    Code = "K7MQ2P",
+                    Name = "Programa espacial de Val",
+                    Players = 3,
+                    MaxPlayers = 8,
+                    HasPassword = true,
+                    GameProtocol = 6,
+                    ModVersion = "0.7.1",
+                    Direct = true,
+                },
+                new PublicServerEntry
+                {
+                    Code = "X4R9TB",
+                    Name = "Mun o nada",
+                    Players = 0,
+                    MaxPlayers = 4,
+                    HasPassword = false,
+                    GameProtocol = 6,
+                    ModVersion = "0.7.0",
+                    Direct = false,
+                },
+            ],
+        };
+
+        // Hospedaje
+        yield return new ServerStatusRequestMessage();
+        yield return new ServerStatusResponseMessage
+        {
+            GameProtocol = 6,
+            ModVersion = "0.7.1",
+            Name = "Programa espacial de Val",
+            Players = 3,
+            MaxPlayers = 8,
+            HasPassword = true,
+            RelayState = RelayLinkState.Rejected,
+            RelayError = "Relay no disponible",
+            Code = "K7MQ2P",
+            Direct = true,
+            IsPublic = true,
+        };
+        yield return new ServerControlMessage { Action = ServerControlAction.SetPrivate };
+        yield return new ServerCodeMessage { Code = "K7MQ2P", Direct = true };
     }
 }
