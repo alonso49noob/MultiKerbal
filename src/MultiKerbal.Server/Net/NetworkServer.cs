@@ -208,12 +208,33 @@ internal sealed class NetworkServer
             }
 
             tcp.NoDelay = true;
-            var connection = new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now);
-            _connections[connection.Id] = connection;
-            _inbound.Enqueue(new ServerEvent(ServerEventKind.Connected, connection));
-            _ = ReceiveLoopAsync(connection, ct);
-            _ = SendLoopAsync(connection, ct);
+            string remoteLabel = tcp.Client.RemoteEndPoint?.ToString() ?? "?";
+            Register(new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now, remoteLabel, relaySessionId: 0));
         }
+    }
+
+    /// <summary>
+    /// Trata como un cliente más una conexión que no llegó por el puerto de juego: la del relay para un jugador que
+    /// entra con código. <paramref name="remoteLabel"/> es la dirección del jugador según el relay.
+    /// </summary>
+    public ClientConnection Adopt(TcpClient tcp, string remoteLabel, long relaySessionId)
+    {
+        tcp.NoDelay = true;
+        var connection = new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now, remoteLabel, relaySessionId);
+        Register(connection);
+        return connection;
+    }
+
+    /// <summary>Conexiones abiertas ahora mismo (para los tests).</summary>
+    internal ClientConnection[] Connections => _connections.Values.ToArray();
+
+    /// <summary>Da de alta la conexión, avisa al bucle principal y arranca su lectura y su envío.</summary>
+    private void Register(ClientConnection connection)
+    {
+        _connections[connection.Id] = connection;
+        _inbound.Enqueue(new ServerEvent(ServerEventKind.Connected, connection));
+        _ = ReceiveLoopAsync(connection, _cts.Token);
+        _ = SendLoopAsync(connection, _cts.Token);
     }
 
     private async Task ReceiveLoopAsync(ClientConnection connection, CancellationToken ct)

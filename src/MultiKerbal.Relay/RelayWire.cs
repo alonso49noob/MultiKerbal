@@ -48,6 +48,21 @@ internal static class RelayWire
         await stream.WriteAsync(frame, ct);
     }
 
+    /// <summary>Manda una respuesta (con plazo) y cierra el envío con un FIN normal, para que el otro lado la lea entera.</summary>
+    public static async Task ReplyAndCloseAsync(TcpClient tcp, Stream stream, IMessage reply, TimeSpan timeout, CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(timeout);
+        await WriteAsync(stream, reply, deadline.Token);
+        try
+        {
+            tcp.Client.Shutdown(SocketShutdown.Send);
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+        {
+        }
+    }
+
     /// <summary>
     /// Errores normales de una conexión que se corta o que manda basura. Los demás (argumentos, estado inválido)
     /// son fallos del programa y no se esconden.

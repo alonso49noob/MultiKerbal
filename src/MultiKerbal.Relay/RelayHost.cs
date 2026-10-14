@@ -25,6 +25,7 @@ public sealed partial class RelayHost
     private readonly ConcurrentDictionary<TcpClient, byte> _connections = new();
 
     private readonly CancellationTokenSource _cts = new();
+    private readonly SessionBroker _broker;
     private readonly ManualResetEventSlim _stopRequested = new(false);
     private CodeStore? _codes;
     private TcpListener? _listener;
@@ -35,6 +36,7 @@ public sealed partial class RelayHost
     internal RelayHost(RelayOptions options)
     {
         _options = options;
+        _broker = new SessionBroker(options, code => TryGetServer(code, out ServerSession? server) ? server : null);
     }
 
     /// <summary>Puerto TCP y UDP real (si se pidió el 0, el que eligió el sistema).</summary>
@@ -51,6 +53,15 @@ public sealed partial class RelayHost
                 return _servers.Count;
         }
     }
+
+    /// <summary>Sesiones de jugadores por el relay abiertas ahora (esperando el enganche o pasando bytes).</summary>
+    internal int RelaySessionCount => _broker.Count;
+
+    internal static string NoServerText => Lang.T("No hay ningún servidor encendido con ese código", "There is no server running with that code");
+
+    internal static string VersionMismatchText(int theirs) => Lang.T(
+        $"El relay usa otra versión del protocolo (relay {ProtocolInfo.RelayVersion}, tú {theirs}). Actualiza MultiKerbal.",
+        $"The relay uses another protocol version (relay {ProtocolInfo.RelayVersion}, you {theirs}). Update MultiKerbal.");
 
     /// <summary>Busca un servidor vivo por su código (con o sin guion, en mayúsculas o minúsculas).</summary>
     internal bool TryGetServer(string code, [NotNullWhen(true)] out ServerSession? session)
@@ -217,9 +228,16 @@ public sealed partial class RelayHost
                     await ReplyAndCloseAsync(tcp, stream, BuildLookupResult(lookup), ct);
                     break;
 
-                // La tarea 6 añade aquí RelayJoin (un jugador entra por el relay) y RelayAttach (el servidor
-                // abre la conexión de una sesión); la tarea 8 añade RelayListRequest (la lista pública).
-                // Hasta entonces, como cualquier otro primer mensaje, se cierra la conexión.
+                case RelayJoinMessage join:
+                    await _broker.JoinAsync(tcp, stream, remote, join, ct);
+                    break;
+
+                case RelayAttachMessage attach:
+                    await _broker.AttachAsync(tcp, stream, remote, attach, ct);
+                    break;
+
+                // La tarea 8 añade RelayListRequest (la lista pública). Hasta entonces, como cualquier otro primer
+                // mensaje, se cierra la conexión.
                 case null:
                     break;
 
@@ -368,14 +386,10 @@ public sealed partial class RelayHost
     private RelayLookupResultMessage BuildLookupResult(RelayLookupMessage lookup)
     {
         if (lookup.RelayVersion != ProtocolInfo.RelayVersion)
-        {
-            return NotFound(Lang.T(
-                $"El relay usa otra versión del protocolo (relay {ProtocolInfo.RelayVersion}, tú {lookup.RelayVersion}). Actualiza MultiKerbal.",
-                $"The relay uses another protocol version (relay {ProtocolInfo.RelayVersion}, you {lookup.RelayVersion}). Update MultiKerbal."));
-        }
+            return NotFound(VersionMismatchText(lookup.RelayVersion));
 
         if (!TryGetServer(lookup.Code ?? string.Empty, out ServerSession? server))
-            return NotFound(Lang.T("No hay ningún servidor encendido con ese código", "There is no server running with that code"));
+            return NotFound(NoServerText);
 
         RelayServerInfo info = server.Info;
         return new RelayLookupResultMessage
@@ -407,20 +421,8 @@ public sealed partial class RelayHost
         await ReplyAndCloseAsync(tcp, stream, new RelayRejectedMessage { Reason = reason }, ct);
     }
 
-    /// <summary>Manda una respuesta y cierra el envío con un FIN normal, para que el otro lado la lea entera.</summary>
-    private async Task ReplyAndCloseAsync(TcpClient tcp, NetworkStream stream, IMessage reply, CancellationToken ct)
-    {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(_options.FirstMessageTimeout);
-        await RelayWire.WriteAsync(stream, reply, deadline.Token);
-        try
-        {
-            tcp.Client.Shutdown(SocketShutdown.Send);
-        }
-        catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
-        {
-        }
-    }
+    private Task ReplyAndCloseAsync(TcpClient tcp, NetworkStream stream, IMessage reply, CancellationToken ct) =>
+        RelayWire.ReplyAndCloseAsync(tcp, stream, reply, _options.FirstMessageTimeout, ct);
 
     /// <summary>
     /// Saca la IP de quien llama y el flujo de la conexión. Falla (false) si el otro lado ya se había ido

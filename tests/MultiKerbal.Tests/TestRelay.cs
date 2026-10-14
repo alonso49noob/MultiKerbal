@@ -186,6 +186,15 @@ internal sealed class RawRelayClient : IDisposable
         }
     }
 
+    /// <summary>Lee exactamente <paramref name="count"/> bytes tal cual (una sesión ya enganchada pasa bytes, no mensajes).</summary>
+    public byte[] ReceiveRaw(int count, double seconds = 4)
+    {
+        _stream.ReadTimeout = Math.Max(1, (int)(seconds * 1000));
+        var buffer = new byte[count];
+        ReadFully(buffer, count, allowEof: false);
+        return buffer;
+    }
+
     /// <summary>Manda y espera la respuesta de la misma conexión.</summary>
     public T Request<T>(IMessage message)
         where T : class, IMessage

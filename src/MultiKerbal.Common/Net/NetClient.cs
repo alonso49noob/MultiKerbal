@@ -58,8 +58,19 @@ namespace MultiKerbal.Common.Net
 
         public long BytesReceived => _session?.BytesReceived ?? 0;
 
-        public void Connect(string host, int port, int timeoutMs = 5000)
+        /// <summary>La sesión acabó yendo por el relay (y no directa al servidor).</summary>
+        public bool ViaRelay => _session?.ViaRelay ?? false;
+
+        /// <summary>Nombre del servidor según la consulta al relay; null si no se hizo.</summary>
+        public string ServerName => _session?.ServerName;
+
+        public void Connect(string host, int port, int timeoutMs = 5000) => Connect(ConnectPlan.Direct(host, port, timeoutMs));
+
+        public void Connect(ConnectPlan plan)
         {
+            if (plan == null)
+                throw new ArgumentNullException(nameof(plan));
+
             lock (_gate)
             {
                 _session?.Close("Reconectando", raiseEvent: false);
@@ -67,7 +78,7 @@ namespace MultiKerbal.Common.Net
                 {
                 }
 
-                _session = new Session(_events, host, port, timeoutMs);
+                _session = new Session(_events, plan);
                 _session.Start();
             }
         }
@@ -90,13 +101,17 @@ namespace MultiKerbal.Common.Net
             private const int UdpBindMaxAttempts = 40;
             private const int ShutdownGraceMs = 1000;
 
+            /// <summary>Plazo para conectar con el relay y para que conteste a la consulta.</summary>
+            private const int RelayTimeoutMs = 5000;
+
+            /// <summary>Espera del resultado de entrar por el relay: más que su plazo de enganche (10 s).</summary>
+            private const int RelayJoinTimeoutMs = 15000;
+
             // Evita que Windows invalide el socket UDP al recibir un ICMP "puerto inalcanzable".
             private static readonly IOControlCode SioUdpConnReset = (IOControlCode)(-1744830452);
 
             private readonly ConcurrentQueue<NetEvent> _events;
-            private readonly string _host;
-            private readonly int _port;
-            private readonly int _timeoutMs;
+            private readonly ConnectPlan _plan;
             private readonly ConcurrentQueue<Outgoing> _outgoing = new ConcurrentQueue<Outgoing>();
             private readonly AutoResetEvent _sendSignal = new AutoResetEvent(false);
 
@@ -117,14 +132,18 @@ namespace MultiKerbal.Common.Net
             private volatile bool _udpStarted;
             private volatile bool _udpReady;
             private volatile string _shutdownReason;
+            private volatile bool _viaRelay;
+            private volatile string _serverName;
 
-            public Session(ConcurrentQueue<NetEvent> events, string host, int port, int timeoutMs)
+            public Session(ConcurrentQueue<NetEvent> events, ConnectPlan plan)
             {
                 _events = events;
-                _host = host;
-                _port = port;
-                _timeoutMs = timeoutMs;
+                _plan = plan;
             }
+
+            public bool ViaRelay => _viaRelay;
+
+            public string ServerName => _serverName;
 
             public NetClientState State => _state;
 
@@ -238,7 +257,7 @@ namespace MultiKerbal.Common.Net
                 }
 
                 CloseQuietly(_stream);
-                CloseQuietly(_tcp);
+                CloseQuietly(Volatile.Read(ref _tcp));
                 CloseQuietly(_udp);
                 _sendSignal.Set();
 
@@ -249,15 +268,13 @@ namespace MultiKerbal.Common.Net
             {
                 try
                 {
-                    IPAddress address = Resolve(_host);
-                    _tcp = new TcpClient(address.AddressFamily) { NoDelay = true };
-                    IAsyncResult connect = _tcp.BeginConnect(address, _port, null, null);
-                    if (!connect.AsyncWaitHandle.WaitOne(_timeoutMs))
-                        throw new TimeoutException("El servidor no responde");
-                    _tcp.EndConnect(connect);
+                    string failure = ConnectByPlan();
+                    if (failure != null)
+                    {
+                        Close(failure, raiseEvent: true);
+                        return;
+                    }
 
-                    _stream = _tcp.GetStream();
-                    _serverEndPoint = new IPEndPoint(address, _port);
                     if (Volatile.Read(ref _closed) != 0)
                     {
                         CloseQuietly(_tcp);
@@ -276,6 +293,165 @@ namespace MultiKerbal.Common.Net
                     Close(Describe(ex), raiseEvent: true);
                 }
             }
+
+            /// <summary>
+            /// Sigue el plan (diseño del relay, 4.3): consulta, intento directo y, si falla, entrar por el relay.
+            /// Devuelve null con la conexión hecha (<see cref="_tcp"/>, <see cref="_stream"/> y
+            /// <see cref="_serverEndPoint"/>) o el motivo para cerrar. Los fallos de red sin otra salida se lanzan.
+            /// </summary>
+            private string ConnectByPlan()
+            {
+                string host = _plan.Host;
+                int port = _plan.Port;
+                bool hasRelay = !string.IsNullOrEmpty(_plan.RelayHost);
+
+                if (_plan.LookupFirst)
+                {
+                    RelayLookupResultMessage lookup;
+                    try
+                    {
+                        lookup = Lookup();
+                    }
+                    catch (Exception ex) when (IsNetworkError(ex))
+                    {
+                        return RelayUnreachable();
+                    }
+
+                    if (!lookup.Found)
+                        return string.IsNullOrEmpty(lookup.Error) ? Lang.T("No se encontró el servidor", "Server not found") : lookup.Error;
+
+                    if (lookup.GameProtocol != ProtocolInfo.Version)
+                    {
+                        string version = string.IsNullOrEmpty(lookup.ModVersion) ? lookup.GameProtocol.ToString() : lookup.ModVersion;
+                        return Lang.T($"Ese servidor usa otra versión de MultiKerbal ({version})", $"That server uses another version of MultiKerbal ({version})");
+                    }
+
+                    _serverName = lookup.Name;
+                    if (!string.IsNullOrEmpty(lookup.DirectHost) && lookup.DirectPort > 0)
+                    {
+                        host = lookup.DirectHost;
+                        port = lookup.DirectPort;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(host))
+                {
+                    try
+                    {
+                        UseConnection(OpenTcp(host, port, _plan.DirectTimeoutMs));
+                        return null;
+                    }
+                    catch (Exception ex) when (hasRelay && IsNetworkError(ex))
+                    {
+                        // Sin acceso directo: se prueba por el relay.
+                    }
+                }
+
+                if (!hasRelay)
+                    return Lang.T("No se indicó ningún servidor", "No server given");
+
+                return JoinThroughRelay();
+            }
+
+            /// <summary>Pregunta al relay por el código. El relay contesta y cierra.</summary>
+            private RelayLookupResultMessage Lookup()
+            {
+                TcpClient tcp = OpenTcp(_plan.RelayHost, _plan.RelayPort, RelayTimeoutMs);
+                try
+                {
+                    NetworkStream stream = tcp.GetStream();
+                    stream.ReadTimeout = RelayTimeoutMs;
+                    WriteFrame(stream, new RelayLookupMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = _plan.JoinCode });
+                    return ReadRelayReply<RelayLookupResultMessage>(stream);
+                }
+                finally
+                {
+                    CloseQuietly(tcp);
+                }
+            }
+
+            /// <summary>Pide al relay que lo conecte con el servidor. Si dice que sí, esa conexión pasa a ser la del juego.</summary>
+            private string JoinThroughRelay()
+            {
+                TcpClient tcp;
+                try
+                {
+                    tcp = OpenTcp(_plan.RelayHost, _plan.RelayPort, RelayTimeoutMs);
+                }
+                catch (Exception ex) when (IsNetworkError(ex))
+                {
+                    return RelayUnreachable();
+                }
+
+                NetworkStream stream = tcp.GetStream();
+                stream.ReadTimeout = RelayJoinTimeoutMs;
+                WriteFrame(stream, new RelayJoinMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = _plan.JoinCode });
+                RelayJoinResultMessage result = ReadRelayReply<RelayJoinResultMessage>(stream);
+                if (!result.Ok)
+                    return string.IsNullOrEmpty(result.Error) ? Lang.T("El relay no pudo conectar con el servidor", "The relay could not reach the server") : result.Error;
+
+                stream.ReadTimeout = Timeout.Infinite;
+                _viaRelay = true;
+                UseConnection(tcp);
+                return null;
+            }
+
+            /// <summary>Lee la respuesta del relay, que tiene que ser del tipo esperado.</summary>
+            private static T ReadRelayReply<T>(NetworkStream stream)
+                where T : class, IMessage
+            {
+                IMessage reply = FrameCodec.ReadTcpFrame(stream, new byte[FrameCodec.TcpHeaderSize], out _);
+                if (reply == null)
+                    throw new IOException("El relay cerró la conexión sin contestar");
+
+                return reply as T ?? throw new ProtocolException($"Respuesta inesperada del relay: {reply.Type}");
+            }
+
+            private void UseConnection(TcpClient tcp)
+            {
+                _stream = tcp.GetStream();
+                _serverEndPoint = (IPEndPoint)tcp.Client.RemoteEndPoint;
+            }
+
+            /// <summary>
+            /// Abre una TCP con plazo. Queda en <see cref="_tcp"/> desde el principio, para que <see cref="Close"/> la
+            /// corte si se cancela la conexión a medias.
+            /// </summary>
+            private TcpClient OpenTcp(string host, int port, int timeoutMs)
+            {
+                IPAddress address = Resolve(host);
+                var tcp = new TcpClient(address.AddressFamily) { NoDelay = true };
+                Interlocked.Exchange(ref _tcp, tcp);
+                try
+                {
+                    if (Volatile.Read(ref _closed) != 0)
+                        throw new ObjectDisposedException(nameof(NetClient));
+
+                    IAsyncResult connect = tcp.BeginConnect(address, port, null, null);
+                    if (!connect.AsyncWaitHandle.WaitOne(timeoutMs))
+                        throw new TimeoutException(Lang.T("El servidor no responde", "The server is not responding"));
+                    tcp.EndConnect(connect);
+                    return tcp;
+                }
+                catch
+                {
+                    CloseQuietly(tcp);
+                    throw;
+                }
+            }
+
+            private static void WriteFrame(NetworkStream stream, IMessage message)
+            {
+                byte[] frame = FrameCodec.EncodeTcp(message);
+                stream.Write(frame, 0, frame.Length);
+            }
+
+            private static string RelayUnreachable() => Lang.T(
+                "No se puede contactar con el relay: los códigos y la lista no funcionan ahora; puedes conectar por IP",
+                "Cannot reach the relay: codes and the server list don't work right now; you can connect by IP");
+
+            private static bool IsNetworkError(Exception ex) =>
+                ex is SocketException || ex is IOException || ex is TimeoutException || ex is ObjectDisposedException || ex is ProtocolException;
 
             private void ReceiveLoop()
             {

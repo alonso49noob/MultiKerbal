@@ -68,6 +68,9 @@ public sealed partial class ServerHost
 
     public int Port => _network.Port;
 
+    /// <summary>Conexiones abiertas ahora mismo (para los tests).</summary>
+    internal ClientConnection[] Connections => _network.Connections;
+
     public void Start()
     {
         UniverseData data = _universe.Load();
@@ -244,7 +247,7 @@ public sealed partial class ServerHost
     private void OnConnected(ClientConnection connection)
     {
         _players[connection.Id] = new Player(connection);
-        Log.Info($"Conexión #{connection.Id} desde {connection.RemoteEndPoint}");
+        Log.Info($"Conexión #{connection.Id} desde {connection.RemoteEndPoint}{(connection.RelaySessionId != 0 ? " (por el relay)" : string.Empty)}");
     }
 
     private void OnDisconnected(ClientConnection connection, string reason)

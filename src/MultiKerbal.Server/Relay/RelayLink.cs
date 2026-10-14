@@ -43,7 +43,7 @@ internal sealed class RelayLink
 
     /// <param name="relayAddress">"host" o "host:puerto" (por defecto, el puerto del relay).</param>
     /// <param name="info">Datos al día del servidor; se pide en cada latido, desde el hilo del enlace.</param>
-    /// <param name="network">Red del juego. La tarea 7 la usa para el UDP; hasta entonces no se toca.</param>
+    /// <param name="network">Red del juego: adopta a los jugadores que entran por el relay (la tarea 7 la usa también para el UDP).</param>
     /// <param name="changed">Se llama en cada cambio de estado, desde el hilo del enlace. Debe ser inmediata (encolar).</param>
     public RelayLink(string relayAddress, byte[] key, int gamePort, Func<RelayServerInfo> info, NetworkServer network, Action changed, RelayLinkOptions options)
     {
@@ -311,12 +311,59 @@ internal sealed class RelayLink
 
             switch (message)
             {
-                // La tarea 6 añade RelayIncoming (un jugador quiere entrar por el relay) y la tarea 7
-                // RelayReachability y RelayUdpToken.
+                case RelayIncomingMessage incoming:
+                    // Aparte, para no parar la lectura del control mientras se conecta.
+                    _ = AttachAsync(incoming, _cts.Token);
+                    break;
+
+                // La tarea 7 añade RelayReachability y RelayUdpToken.
                 default:
                     Log.Warn($"El relay mandó un mensaje inesperado por el control: {message.Type}");
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Un jugador entra por el relay: se abre una conexión nueva con el relay, se engancha a su sesión y, desde ahí,
+    /// es una conexión de juego más. Si falla, el relay acaba dando un error al jugador; aquí solo se avisa.
+    /// </summary>
+    private async Task AttachAsync(RelayIncomingMessage incoming, CancellationToken ct)
+    {
+        string player = incoming.ClientAddress ?? "?";
+        var tcp = new TcpClient();
+        bool adopted = false;
+        try
+        {
+            using (var attach = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                attach.CancelAfter(ConnectTimeout);
+                await tcp.ConnectAsync(_host, _port, attach.Token);
+                byte[] frame = FrameCodec.EncodeTcp(new RelayAttachMessage
+                {
+                    RelayVersion = ProtocolInfo.RelayVersion,
+                    SessionId = incoming.SessionId,
+                    Secret = incoming.Secret,
+                });
+                await tcp.GetStream().WriteAsync(frame, attach.Token);
+            }
+
+            _network.Adopt(tcp, player, incoming.SessionId);
+            adopted = true;
+        }
+        catch (Exception ex) when (IsConnectionError(ex))
+        {
+            if (!ct.IsCancellationRequested)
+                Log.Warn($"No se pudo enganchar por el relay al jugador {player}: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Error inesperado al enganchar por el relay al jugador {player}: {ex}");
+        }
+        finally
+        {
+            if (!adopted)
+                tcp.Dispose();
         }
     }
 

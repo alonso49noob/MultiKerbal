@@ -14,11 +14,19 @@ internal sealed class ClientConnection
     private long _pendingBytes;
     private int _closed;
 
-    public ClientConnection(int id, TcpClient tcp, double now)
+    /// <param name="remoteLabel">Dirección del jugador para el registro (en las del relay, la que dice el relay).</param>
+    /// <param name="relaySessionId">Sesión del relay por la que llegó; 0 si es una conexión directa.</param>
+    public ClientConnection(int id, TcpClient tcp, double now, string remoteLabel, long relaySessionId)
     {
         Id = id;
         Tcp = tcp;
-        RemoteEndPoint = tcp.Client.RemoteEndPoint?.ToString() ?? "?";
+        RemoteEndPoint = remoteLabel;
+        RelaySessionId = relaySessionId;
+
+        // Siempre del socket real, nunca de la etiqueta: una conexión del relay sale del relay, no del jugador.
+        IsLoopback = relaySessionId == 0
+                     && tcp.Client.RemoteEndPoint is IPEndPoint endPoint
+                     && IPAddress.IsLoopback(endPoint.Address.IsIPv4MappedToIPv6 ? endPoint.Address.MapToIPv4() : endPoint.Address);
         ConnectedAt = now;
         _lastReceived = now;
     }
@@ -28,6 +36,12 @@ internal sealed class ClientConnection
     public TcpClient Tcp { get; }
 
     public string RemoteEndPoint { get; }
+
+    /// <summary>Sesión del relay por la que llegó la conexión; 0 si es directa.</summary>
+    public long RelaySessionId { get; }
+
+    /// <summary>La conexión viene de este mismo equipo. Siempre falso en las que llegan por el relay.</summary>
+    public bool IsLoopback { get; }
 
     public double ConnectedAt { get; }
 

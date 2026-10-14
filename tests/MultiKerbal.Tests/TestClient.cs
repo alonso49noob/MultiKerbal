@@ -37,7 +37,37 @@ internal sealed class TestClient : IDisposable
     public static TestClient TryJoin(int port, string name, string? password = null, ModInfo[]? mods = null, string? accountPassword = DefaultAccountPassword)
     {
         TestClient client = Connect(port);
-        client.Send(new HandshakeRequestMessage
+        client.Handshake(name, password, mods, accountPassword);
+        return client;
+    }
+
+    /// <summary>Empieza a conectar con un código (consulta al relay y, si hace falta, entra por él) sin esperar a nada.</summary>
+    public static TestClient StartWithCode(string relayAddress, string code)
+    {
+        var client = new TestClient();
+        client.Net.Connect(ConnectPlan.ForCode(relayAddress, code));
+        return client;
+    }
+
+    /// <summary>Entra con un código, como el mod, y exige que el servidor lo acepte.</summary>
+    public static TestClient JoinWithCode(string relayAddress, string code, string name)
+    {
+        TestClient client = StartWithCode(relayAddress, code);
+        WaitUntil(() => client.Net.State != NetClientState.Connecting);
+        if (client.Net.State != NetClientState.Connected)
+            Assert.Fail($"No se pudo entrar con el código: {client.WaitForEvent(NetEventType.Disconnected).Reason}");
+
+        client.WaitForEvent(NetEventType.Connected);
+        client.Handshake(name, null, null, DefaultAccountPassword);
+        Assert.True(client.Welcome!.Accepted, client.Welcome.RejectReason);
+        return client;
+    }
+
+    public void Send(IMessage message, Delivery delivery = Delivery.Reliable) => Net.Send(message, delivery);
+
+    private void Handshake(string name, string? password, ModInfo[]? mods, string? accountPassword)
+    {
+        Send(new HandshakeRequestMessage
         {
             ProtocolVersion = ProtocolInfo.Version,
             PlayerName = name,
@@ -48,11 +78,8 @@ internal sealed class TestClient : IDisposable
             Mods = mods ?? [],
         });
 
-        client.Welcome = client.WaitFor<HandshakeResponseMessage>();
-        return client;
+        Welcome = WaitFor<HandshakeResponseMessage>();
     }
-
-    public void Send(IMessage message, Delivery delivery = Delivery.Reliable) => Net.Send(message, delivery);
 
     public T WaitFor<T>(Func<T, bool>? predicate = null, int timeoutMs = 5000)
         where T : class, IMessage
