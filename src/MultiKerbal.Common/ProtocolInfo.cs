@@ -49,5 +49,20 @@ namespace MultiKerbal.Common
         public const double PingIntervalSeconds = 2.0;
         public const double TimeoutSeconds = 20.0;
         public const double HandshakeTimeoutSeconds = 10.0;
+
+        /// <summary>Versión del protocolo entre servidor y relay (independiente de <see cref="Version"/>).</summary>
+        public const int RelayVersion = 1;
+
+        public const int DefaultRelayPort = 6760;
+        public const string DefaultRelayAddress = "multikerbal.duckdns.org:6760";
+
+        /// <summary>Tamaño máximo de un mensaje de control del relay.</summary>
+        public const int MaxRelayMessageBytes = 64 * 1024;
+
+        /// <summary>Máximo de servidores que devuelve la lista pública.</summary>
+        public const int MaxListedServers = 500;
+
+        /// <summary>Los nombres de la lista pública se cortan a esta longitud.</summary>
+        public const int MaxListedNameLength = 40;
     }
 }
