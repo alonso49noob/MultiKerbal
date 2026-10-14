@@ -10,6 +10,9 @@ internal enum ServerEventKind
     Message,
     Command,
     Stop,
+
+    /// <summary>Cambió el estado del enlace con el relay (lo encola el propio enlace).</summary>
+    RelayChanged,
 }
 
 internal readonly record struct ServerEvent(

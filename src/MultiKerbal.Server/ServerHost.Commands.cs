@@ -22,7 +22,7 @@ public sealed partial class ServerHost
         {
             case "help":
             case "ayuda":
-                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | account [delete <jugador>] | progress | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
+                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | account [delete <jugador>] | progress | relay | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
                 break;
 
             case "vessels":
@@ -90,6 +90,10 @@ public sealed partial class ServerHost
             case "progress":
             case "progreso":
                 ShowProgress();
+                break;
+
+            case "relay":
+                Log.Info(DescribeRelay());
                 break;
 
             case "stop":

@@ -10,6 +10,7 @@ using MultiKerbal.Common.Progress;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Server.Net;
 using MultiKerbal.Server.Persistence;
+using MultiKerbal.Server.Relay;
 using MultiKerbal.Server.Systems;
 
 namespace MultiKerbal.Server;
@@ -44,9 +45,16 @@ public sealed partial class ServerHost
     private double _lastAutosave;
 
     public ServerHost(ServerConfig config)
+        : this(config, null)
+    {
+    }
+
+    /// <param name="relayOptions">Tiempos del enlace con el relay; los tests los acortan.</param>
+    internal ServerHost(ServerConfig config, RelayLinkOptions? relayOptions)
     {
         config.Validate();
         Config = config;
+        _relayOptions = relayOptions ?? new RelayLinkOptions();
         _network = new NetworkServer(_inbound, _clock);
         _universe = new UniverseStore(config.DataDirectory);
         _vessels = new VesselStore(_universe.DirectoryPath);
@@ -74,6 +82,7 @@ public sealed partial class ServerHost
             _time.Resume(now);
 
         _network.Start(Config.Port);
+        StartRelay();
         _lastAutosave = now;
         _running = true;
         _loopThread = new Thread(Loop) { Name = "MultiKerbal Server" };
@@ -188,6 +197,7 @@ public sealed partial class ServerHost
     private void Shutdown()
     {
         Log.Info("Deteniendo el servidor...");
+        StopRelay();
         foreach (Player player in _players.Values)
             _network.Kick(player.Connection, "El servidor se ha detenido");
 
@@ -218,6 +228,9 @@ public sealed partial class ServerHost
                 case ServerEventKind.Stop:
                     _running = false;
                     break;
+                case ServerEventKind.RelayChanged:
+                    OnRelayChanged();
+                    break;
             }
         }
         catch (Exception ex)
@@ -246,6 +259,7 @@ public sealed partial class ServerHost
         }
 
         double now = _clock.Now;
+        UpdateRelayInfo();
         Log.Info($"{player.Name} se ha desconectado: {reason}");
         ReleaseVesselsOf(player);
         BroadcastReliable(new PlayerLeftMessage { PlayerId = player.Info.Id });
@@ -426,6 +440,7 @@ public sealed partial class ServerHost
         BroadcastReliable(new PlayerJoinedMessage { Player = player.Info }, except: player);
         SendSystemChat(Lang.T($"{player.Name} se ha unido a la partida", $"{player.Name} joined the game"));
 
+        UpdateRelayInfo();
         Log.Info($"{player.Name} (jugador {playerId}) se ha unido desde {player.Connection.RemoteEndPoint} — MultiKerbal {request.ModVersion}, KSP {request.GameVersion}");
         AnnounceMods(player, modDifferences);
     }

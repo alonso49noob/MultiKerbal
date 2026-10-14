@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Progress;
+using MultiKerbal.Common.Relay;
 
 namespace MultiKerbal.Server;
 
@@ -47,6 +48,15 @@ public sealed class ServerConfig
 
     /// <summary>Fondos con los que empieza una carrera nueva.</summary>
     public double StartingFunds { get; set; } = 25_000;
+
+    /// <summary>Registrarse en el relay: da un código para entrar sin abrir puertos y permite aparecer en la lista pública.</summary>
+    public bool Relay { get; set; } = true;
+
+    /// <summary>Dirección del relay, "host" o "host:puerto".</summary>
+    public string RelayAddress { get; set; } = ProtocolInfo.DefaultRelayAddress;
+
+    /// <summary>Aparecer en la lista pública de servidores del relay (con <see cref="Relay"/>). Por defecto no: solo se entra con el código.</summary>
+    public bool Public { get; set; } = false;
 
     [JsonIgnore]
     public GameMode Mode { get; private set; } = Common.Progress.GameMode.Sandbox;
@@ -104,6 +114,12 @@ public sealed class ServerConfig
 
         if (!double.IsFinite(StartingFunds) || StartingFunds < 0)
             StartingFunds = 25_000;
+
+        if (Relay && !RelayEndpoint.TryParse(RelayAddress ?? string.Empty, ProtocolInfo.DefaultRelayPort, out _, out _))
+        {
+            Log.Warn($"RelayAddress \"{RelayAddress}\" no es una dirección válida (host o host:puerto): se desactiva el relay");
+            Relay = false;
+        }
 
         ServerName = string.IsNullOrWhiteSpace(ServerName) ? "Servidor MultiKerbal" : ServerName.Trim();
         Password ??= "";
