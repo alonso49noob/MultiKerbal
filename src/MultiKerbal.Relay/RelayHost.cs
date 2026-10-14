@@ -191,9 +191,8 @@ public sealed partial class RelayHost
         _connections[tcp] = 0;
         try
         {
-            IPAddress remote = RemoteIp(tcp);
-            tcp.NoDelay = true;
-            NetworkStream stream = tcp.GetStream();
+            if (!TryPrepare(tcp, out IPAddress remote, out NetworkStream stream))
+                return;
 
             IMessage? first;
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
@@ -264,39 +263,34 @@ public sealed partial class RelayHost
             return null;
         }
 
-        string code;
-        try
-        {
-            code = _codes!.GetOrAssign(register.Key);
-        }
-        catch (IOException ex)
-        {
-            RelayLog.Error($"No se pudo guardar el código de un servidor nuevo: {ex.Message}");
-            await RejectAsync(tcp, stream, remote, Lang.T("El relay no pudo guardar tu código. Inténtalo más tarde.", "The relay could not save your code. Try again later."), ct);
-            return null;
-        }
-
         RelayServerInfo info = register.Info;
         info.Name ??= string.Empty;
         info.ModVersion ??= string.Empty;
 
         string? rejection = null;
+        string code = string.Empty;
         ServerSession? replaced = null;
         ServerSession? session = null;
+
+        // Todo bajo el cerrojo del registro: el límite por IP y el baneo se miran antes de asignar el código
+        // (un registro rechazado no debe gastar un código ni escribir en disco) y sin cruzarse con otro registro
+        // ni con el comando ban.
         lock (_registryLock)
         {
             if (_stopping)
                 return null;
 
-            // El baneo se comprueba aquí dentro para no cruzarse con el comando ban.
-            if (_codes!.IsBanned(code))
+            bool knownKey = _codes!.TryGetCode(register.Key, out code);
+            if (knownKey && _codes.IsBanned(code))
             {
                 rejection = Lang.T("Este servidor está bloqueado en el relay", "This server is blocked on the relay");
             }
             else
             {
                 // Si el servidor se cayó y vuelve antes de que caduque, la sesión vieja se sustituye (no cuenta dos veces).
-                _servers.TryGetValue(code, out replaced);
+                if (knownKey)
+                    _servers.TryGetValue(code, out replaced);
+
                 int sameIp = _servers.Values.Count(s => s != replaced && s.RemoteAddress.Equals(remote));
                 if (sameIp >= _options.MaxServersPerIp)
                 {
@@ -306,8 +300,17 @@ public sealed partial class RelayHost
                 }
                 else
                 {
-                    session = new ServerSession(tcp, code, NewSecret(), info, register.GamePort, remote, _options.HeartbeatTimeout);
-                    _servers[code] = session;
+                    try
+                    {
+                        code = _codes.GetOrAssign(register.Key);
+                        session = new ServerSession(tcp, code, NewSecret(), info, register.GamePort, remote, _options.HeartbeatTimeout);
+                        _servers[code] = session;
+                    }
+                    catch (IOException ex)
+                    {
+                        RelayLog.Error($"No se pudo guardar el código de un servidor nuevo: {ex.Message}");
+                        rejection = Lang.T("El relay no pudo guardar tu código. Inténtalo más tarde.", "The relay could not save your code. Try again later.");
+                    }
                 }
             }
         }
@@ -419,10 +422,28 @@ public sealed partial class RelayHost
         }
     }
 
-    private static IPAddress RemoteIp(TcpClient tcp)
+    /// <summary>
+    /// Saca la IP de quien llama y el flujo de la conexión. Falla (false) si el otro lado ya se había ido
+    /// cuando se aceptó, que es lo único esperable aquí.
+    /// </summary>
+    private static bool TryPrepare(TcpClient tcp, out IPAddress remote, out NetworkStream stream)
     {
-        IPAddress address = ((IPEndPoint)tcp.Client.RemoteEndPoint!).Address;
-        return address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        remote = IPAddress.None;
+        stream = null!;
+        try
+        {
+            if (tcp.Client.RemoteEndPoint is not IPEndPoint endPoint)
+                return false;
+
+            remote = endPoint.Address.IsIPv4MappedToIPv6 ? endPoint.Address.MapToIPv4() : endPoint.Address;
+            tcp.NoDelay = true;
+            stream = tcp.GetStream();
+            return true;
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Secreto UDP del servidor: aleatorio y nunca 0 (la ficha 0 es la de las sondas).</summary>

@@ -126,6 +126,9 @@ public sealed class RelayRegistrationTests
         Assert.True(sixth.WaitForClose());
         Assert.Equal(5, relay.Host.LiveServerCount);
 
+        // El rechazo no gasta un código: en el disco solo están los cinco servidores.
+        Assert.Equal(5, new CodeStore(relay.DataDirectory).Count);
+
         // Volver a registrar una clave que ya está viva no cuenta como un servidor más.
         RegisterOk(relay.Connect(), 10);
         Assert.Equal(5, relay.Host.LiveServerCount);
@@ -153,7 +156,7 @@ public sealed class RelayRegistrationTests
         using RawRelayClient server = relay.Connect();
         string code = RegisterOk(server, 1).Code;
 
-        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 3));
+        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 2));
         Assert.False(Lookup(relay, code).Found);
         Assert.True(server.WaitForClose());
     }
@@ -192,9 +195,10 @@ public sealed class RelayRegistrationTests
 
         relay.Host.ExecuteCommand($"ban {ServerCode.Format(code)}");
 
-        Assert.True(server.WaitForClose());
-        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0));
+        // La consulta ya no lo encuentra en cuanto vuelve el comando, sin esperar a que se cierre la lectura.
+        Assert.Equal(0, relay.Host.LiveServerCount);
         Assert.False(Lookup(relay, code).Found);
+        Assert.True(server.WaitForClose());
 
         using RawRelayClient again = relay.Connect();
         again.Request<RelayRejectedMessage>(RawRelayClient.Register(RawRelayClient.Key(1)));
@@ -246,16 +250,35 @@ public sealed class RelayRegistrationTests
         Assert.True(silent.WaitForClose(seconds: 3));
     }
 
+    // Cabecera que anuncia 1 MB (más que los 64 KB del relay); no se manda el resto. Si el relay no mirase la
+    // longitud antes de leer, se quedaría esperando el cuerpo y la conexión no se cerraría en el plazo de la prueba.
+    private static byte[] OversizedHeader() =>
+        BitConverter.GetBytes(1024 * 1024 + 2).Concat(BitConverter.GetBytes((ushort)MessageType.RelayLookup)).ToArray();
+
     [Fact]
-    public void OversizedFrame_ClosesTheConnectionWithoutReadingIt()
+    public void OversizedFirstMessage_ClosesTheConnectionWithoutReadingIt()
     {
-        using var relay = new TestRelay(LongLived);
+        // Plazo del primer mensaje muy largo: si se cierra es por el tamaño, no por el plazo.
+        using var relay = new TestRelay(o => o.FirstMessageTimeout = TimeSpan.FromSeconds(30));
         using RawRelayClient client = relay.Connect();
 
-        // La cabecera anuncia 1 MB (más que los 64 KB del relay); no se manda el resto.
-        client.SendRaw(BitConverter.GetBytes(1024 * 1024 + 2).Concat(BitConverter.GetBytes((ushort)MessageType.RelayLookup)).ToArray());
+        client.SendRaw(OversizedHeader());
 
-        Assert.True(client.WaitForClose());
+        Assert.True(client.WaitForClose(seconds: 1));
+    }
+
+    [Fact]
+    public void OversizedMessageOnTheControl_ClosesAndRemovesTheSession()
+    {
+        // Latido muy largo: si se cierra es por el tamaño, no por la caducidad.
+        using var relay = new TestRelay(LongLived);
+        using RawRelayClient server = relay.Connect();
+        RegisterOk(server, 1);
+
+        server.SendRaw(OversizedHeader());
+
+        Assert.True(server.WaitForClose(seconds: 1));
+        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 1));
     }
 
     [Fact]

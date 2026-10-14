@@ -76,6 +76,23 @@ internal sealed class CodeStore
         }
     }
 
+    /// <summary>Busca el código de esta clave sin asignar ninguno. False si la clave es nueva.</summary>
+    public bool TryGetCode(byte[] key, out string code)
+    {
+        string hash = Convert.ToHexString(SHA256.HashData(key));
+        lock (_lock)
+        {
+            if (_byKeyHash.TryGetValue(hash, out Entry? entry))
+            {
+                code = entry.Code;
+                return true;
+            }
+        }
+
+        code = string.Empty;
+        return false;
+    }
+
     /// <summary>Acepta "K7MQ2P" o "K7M-Q2P" (también en minúsculas).</summary>
     public bool IsBanned(string code)
     {

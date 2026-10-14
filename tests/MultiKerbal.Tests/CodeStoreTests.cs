@@ -16,6 +16,19 @@ public sealed class CodeStoreTests : IDisposable
     private static byte[] Key(byte seed) => Enumerable.Range(0, 32).Select(i => (byte)(seed + i)).ToArray();
 
     [Fact]
+    public void TryGetCode_DoesNotAssignAnything()
+    {
+        var store = new CodeStore(_dir);
+        Assert.False(store.TryGetCode(Key(1), out _));
+        Assert.Equal(0, store.Count);
+        Assert.False(File.Exists(Path.Combine(_dir, "codes.json")));
+
+        string code = store.GetOrAssign(Key(1));
+        Assert.True(store.TryGetCode(Key(1), out string found));
+        Assert.Equal(code, found);
+    }
+
+    [Fact]
     public void SameKeyGivesSameCode()
     {
         var store = new CodeStore(_dir);

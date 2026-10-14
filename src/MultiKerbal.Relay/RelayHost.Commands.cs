@@ -84,8 +84,10 @@ public sealed partial class RelayHost
             lock (_registryLock)
             {
                 known = ban ? _codes!.Ban(code) : _codes!.Unban(code);
+
+                // Se saca del registro ya, no cuando termine su lectura: así la consulta no lo encuentra ni un instante.
                 if (ban && known)
-                    _servers.TryGetValue(code, out live);
+                    _servers.Remove(code, out live);
             }
         }
         catch (IOException ex)

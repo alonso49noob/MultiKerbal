@@ -37,6 +37,8 @@ internal sealed class TestRelay : IDisposable
 
     public RelayHost Host { get; private set; }
 
+    public string DataDirectory => _dataDirectory;
+
     public int Port => Host.Port;
 
     public int ProbePort => Host.ProbePort;

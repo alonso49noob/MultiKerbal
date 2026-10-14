@@ -48,8 +48,10 @@ internal static class RelayWire
         await stream.WriteAsync(frame, ct);
     }
 
-    /// <summary>Errores normales de una conexión que se corta o que manda basura.</summary>
+    /// <summary>
+    /// Errores normales de una conexión que se corta o que manda basura. Los demás (argumentos, estado inválido)
+    /// son fallos del programa y no se esconden.
+    /// </summary>
     public static bool IsConnectionError(Exception ex) =>
-        ex is IOException or SocketException or ObjectDisposedException or OperationCanceledException
-            or InvalidOperationException or ProtocolException or ArgumentException;
+        ex is IOException or SocketException or ObjectDisposedException or OperationCanceledException or ProtocolException;
 }
