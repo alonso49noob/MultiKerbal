@@ -70,6 +70,13 @@ internal sealed class RelayLink
         }
     }
 
+    /// <summary>Estado, código y acceso directo leídos a la vez, para que no se mezclen valores de momentos distintos.</summary>
+    public (RelayLinkState State, string Code, string Error, bool Direct) Snapshot()
+    {
+        lock (_sync)
+            return (_state, _code, _error, _direct);
+    }
+
     /// <summary>Código sin guion (se muestra con <see cref="ServerCode.Format"/>). Vacío si no está registrado.</summary>
     public string Code
     {
@@ -282,6 +289,13 @@ internal sealed class RelayLink
         catch (Exception ex) when (IsConnectionError(ex))
         {
             // Si el latido no sale, la conexión está rota: se corta la lectura para reconectar ya.
+            session.Cancel();
+        }
+        catch (Exception ex)
+        {
+            // Un fallo del programa (al pedir los datos o al codificar): sin latidos el relay nos daría por caídos,
+            // así que no se deja la lectura esperando; se anota y se reconecta.
+            Log.Error($"Error inesperado al mandar el latido al relay: {ex}");
             session.Cancel();
         }
     }

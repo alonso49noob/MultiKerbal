@@ -117,10 +117,13 @@ public sealed class RelayLinkTests
         using var server = new TestServer(relayAddress: relay.RelayAddress);
         Assert.True(WaitRegistered(server));
         string code = LinkOf(server).Code;
+        Assert.True(relay.Host.TryGetServer(code, out ServerSession? before));
 
         Thread.Sleep(2300);
 
-        Assert.True(relay.Host.TryGetServer(code, out _));
+        // La misma sesión del relay: si el servidor hubiera caducado y se hubiera vuelto a registrar, sería otra.
+        Assert.True(relay.Host.TryGetServer(code, out ServerSession? after));
+        Assert.Same(before, after);
         Assert.Equal(RelayLinkState.Registered, LinkOf(server).State);
     }
 
@@ -204,12 +207,21 @@ public sealed class RelayLinkTests
     {
         int port = ReserveFreePort();
         var server = new TestServer(relayAddress: $"127.0.0.1:{port}");
-        Assert.Equal(RelayLinkState.Connecting, LinkOf(server).State);
+        TimeSpan elapsed;
+        try
+        {
+            Assert.Equal(RelayLinkState.Connecting, LinkOf(server).State);
 
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        server.Dispose();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            server.Dispose();
+            elapsed = watch.Elapsed;
+        }
+        finally
+        {
+            server.Dispose(); // idempotente; cubre el fallo de la comprobación anterior
+        }
 
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"Tardó {watch.Elapsed}");
+        Assert.True(elapsed < TimeSpan.FromSeconds(3), $"Tardó {elapsed}");
     }
 
     [Fact]

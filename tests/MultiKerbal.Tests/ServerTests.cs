@@ -202,6 +202,7 @@ public sealed class ServerIntegrationTests : IDisposable
             Port = 0,
             DataDirectory = _dataDirectory,
             ServerName = "Servidor de pruebas",
+            Relay = false, // estos tests no deben intentar llegar a Internet
         });
         server.Start();
         return server;

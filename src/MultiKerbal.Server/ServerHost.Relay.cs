@@ -72,14 +72,15 @@ public sealed partial class ServerHost
         if (relay == null)
             return "Relay desactivado";
 
-        switch (relay.State)
+        var (state, code, error, direct) = relay.Snapshot();
+        switch (state)
         {
             case RelayLinkState.Connecting:
                 return $"Conectando con {relay.RelayAddress}...";
             case RelayLinkState.Registered:
-                return $"Código {ServerCode.Format(relay.Code)} ({(relay.Direct ? "accesible directamente" : "por el relay")})";
+                return $"Código {ServerCode.Format(code)} ({(direct ? "accesible directamente" : "por el relay")})";
             case RelayLinkState.Rejected:
-                return $"Rechazado: {relay.Error}";
+                return $"Rechazado: {error}";
             default:
                 return "Relay desactivado";
         }
