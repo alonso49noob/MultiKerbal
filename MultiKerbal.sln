@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MultiKerbal.Tests", "tests\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MultiKerbal.Client", "src\MultiKerbal.Client\MultiKerbal.Client.csproj", "{05B370DD-0FA7-4967-A5A5-89E356177B8B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MultiKerbal.Relay", "src\MultiKerbal.Relay\MultiKerbal.Relay.csproj", "{C99F7573-7374-4E3C-86FF-1D2E9945DF22}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -73,6 +75,18 @@ Global
 		{05B370DD-0FA7-4967-A5A5-89E356177B8B}.Release|x64.Build.0 = Release|Any CPU
 		{05B370DD-0FA7-4967-A5A5-89E356177B8B}.Release|x86.ActiveCfg = Release|Any CPU
 		{05B370DD-0FA7-4967-A5A5-89E356177B8B}.Release|x86.Build.0 = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|x64.Build.0 = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Debug|x86.Build.0 = Debug|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|x64.ActiveCfg = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|x64.Build.0 = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|x86.ActiveCfg = Release|Any CPU
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -82,5 +96,6 @@ Global
 		{D6E50900-89AE-4137-B224-183A8BE911CD} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{31BAF817-696A-49BE-80E1-94777BECD58C} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{05B370DD-0FA7-4967-A5A5-89E356177B8B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{C99F7573-7374-4E3C-86FF-1D2E9945DF22} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MultiKerbal.Common\MultiKerbal.Common.csproj" />
     <ProjectReference Include="..\..\src\MultiKerbal.Server\MultiKerbal.Server.csproj" />
+    <ProjectReference Include="..\..\src\MultiKerbal.Relay\MultiKerbal.Relay.csproj" />
   </ItemGroup>
 
   <ItemGroup>
