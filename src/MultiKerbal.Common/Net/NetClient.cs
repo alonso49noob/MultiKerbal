@@ -93,6 +93,12 @@ namespace MultiKerbal.Common.Net
 
         public bool TryDequeue(out NetEvent netEvent) => _events.TryDequeue(out netEvent);
 
+        /// <summary>
+        /// Solo para los tests: cierra el socket UDP y abre otro en un puerto nuevo, con la misma ficha, como cuando
+        /// el router del jugador le cambia el puerto a mitad de partida.
+        /// </summary>
+        internal void RebindUdpForTests() => _session?.RebindUdp();
+
         public void Dispose() => Disconnect("Cliente cerrado");
 
         private sealed class Session
@@ -117,7 +123,7 @@ namespace MultiKerbal.Common.Net
 
             private TcpClient _tcp;
             private NetworkStream _stream;
-            private Socket _udp;
+            private volatile Socket _udp;
             private IPEndPoint _serverEndPoint;
             private ulong _udpToken;
             private Timer _shutdownTimer;
@@ -193,20 +199,9 @@ namespace MultiKerbal.Common.Net
 
                 try
                 {
-                    _udp = new Socket(_serverEndPoint.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
-                    try
-                    {
-                        _udp.IOControl(SioUdpConnReset, new byte[4], null);
-                    }
-                    catch (Exception)
-                    {
-                        // Solo existe en Windows.
-                    }
-
-                    _udp.Connect(_serverEndPoint);
                     _udpToken = token;
+                    _udp = OpenUdp();
                     _udpStarted = true;
-                    new Thread(UdpReceiveLoop) { IsBackground = true, Name = "MultiKerbal UDP" }.Start();
 
                     if (Volatile.Read(ref _closed) != 0)
                         CloseQuietly(_udp);
@@ -216,6 +211,45 @@ namespace MultiKerbal.Common.Net
                     CloseQuietly(_udp);
                     _udp = null;
                     _udpStarted = false;
+                }
+            }
+
+            /// <summary>Cambia el socket UDP por otro en un puerto nuevo, con la misma ficha (para los tests).</summary>
+            public void RebindUdp()
+            {
+                if (!_udpStarted || Volatile.Read(ref _closed) != 0)
+                    return;
+
+                Socket old = _udp;
+                _udp = OpenUdp();
+                CloseQuietly(old);
+                if (Volatile.Read(ref _closed) != 0)
+                    CloseQuietly(_udp);
+            }
+
+            /// <summary>Abre un socket UDP "conectado" al servidor (o al relay) y arranca su hilo de recepción.</summary>
+            private Socket OpenUdp()
+            {
+                var udp = new Socket(_serverEndPoint.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+                try
+                {
+                    try
+                    {
+                        udp.IOControl(SioUdpConnReset, new byte[4], null);
+                    }
+                    catch (Exception)
+                    {
+                        // Solo existe en Windows.
+                    }
+
+                    udp.Connect(_serverEndPoint);
+                    new Thread(() => UdpReceiveLoop(udp)) { IsBackground = true, Name = "MultiKerbal UDP" }.Start();
+                    return udp;
+                }
+                catch
+                {
+                    CloseQuietly(udp);
+                    throw;
                 }
             }
 
@@ -520,7 +554,7 @@ namespace MultiKerbal.Common.Net
                 }
             }
 
-            private void UdpReceiveLoop()
+            private void UdpReceiveLoop(Socket udp)
             {
                 var buffer = new byte[65536];
                 while (Volatile.Read(ref _closed) == 0)
@@ -528,7 +562,7 @@ namespace MultiKerbal.Common.Net
                     int received;
                     try
                     {
-                        received = _udp.Receive(buffer);
+                        received = udp.Receive(buffer);
                     }
                     catch (ObjectDisposedException)
                     {
@@ -536,7 +570,8 @@ namespace MultiKerbal.Common.Net
                     }
                     catch (Exception)
                     {
-                        if (Volatile.Read(ref _closed) != 0)
+                        // Cerrado (al terminar o al cambiarlo por otro).
+                        if (Volatile.Read(ref _closed) != 0 || udp != _udp)
                             return;
                         Thread.Sleep(10);
                         continue;

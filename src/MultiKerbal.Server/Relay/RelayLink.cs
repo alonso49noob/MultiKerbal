@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
@@ -9,8 +10,8 @@ using MultiKerbal.Server.Net;
 namespace MultiKerbal.Server.Relay;
 
 /// <summary>
-/// Enlace del servidor con el relay: abre la conexión de control, se registra, manda latidos y, si algo falla,
-/// reintenta solo. Corre en sus propias tareas y nunca toca el bucle principal: los cambios de estado se avisan
+/// Enlace del servidor con el relay: abre la conexión de control, se registra, manda latidos y el hola UDP, avisa
+/// de las fichas UDP de los jugadores que entran por el relay y, si algo falla, reintenta solo. Corre en sus propias tareas y nunca toca el bucle principal: los cambios de estado se avisan
 /// con <c>changed</c>, que solo encola un evento. <see cref="State"/>, <see cref="Code"/>, <see cref="Error"/> y
 /// <see cref="Direct"/> se pueden leer desde cualquier hilo.
 /// </summary>
@@ -38,12 +39,15 @@ internal sealed class RelayLink
     private string _error = string.Empty;
     private bool _direct;
 
+    /// <summary>Control registrado ahora mismo, para los mensajes que salen fuera de su tarea; null si no hay. Con <see cref="_sync"/>.</summary>
+    private Control? _control;
+
     /// <summary>La conexión actual llegó a registrarse. Solo la toca la tarea del enlace.</summary>
     private bool _registeredThisConnection;
 
     /// <param name="relayAddress">"host" o "host:puerto" (por defecto, el puerto del relay).</param>
     /// <param name="info">Datos al día del servidor; se pide en cada latido, desde el hilo del enlace.</param>
-    /// <param name="network">Red del juego: adopta a los jugadores que entran por el relay (la tarea 7 la usa también para el UDP).</param>
+    /// <param name="network">Red del juego: adopta a los jugadores que entran por el relay y manda el hola UDP desde su socket.</param>
     /// <param name="changed">Se llama en cada cambio de estado, desde el hilo del enlace. Debe ser inmediata (encolar).</param>
     public RelayLink(string relayAddress, byte[] key, int gamePort, Func<RelayServerInfo> info, NetworkServer network, Action changed, RelayLinkOptions options)
     {
@@ -97,7 +101,7 @@ internal sealed class RelayLink
         }
     }
 
-    /// <summary>Los puertos son alcanzables desde fuera (lo fija la comprobación de la tarea 7).</summary>
+    /// <summary>Se puede entrar sin pasar por el relay: su comprobación llegó al puerto de juego por TCP y por UDP.</summary>
     public bool Direct
     {
         get
@@ -140,14 +144,19 @@ internal sealed class RelayLink
         }
     }
 
-    /// <summary>Repetir la comprobación de acceso directo. Lo implementa la tarea 7.</summary>
-    public void Recheck()
-    {
-    }
+    /// <summary>Pide al relay que repita la comprobación de acceso directo. No bloquea; sin registro no hace nada.</summary>
+    public void Recheck() => SendOnControl(new RelayRecheckMessage());
 
-    /// <summary>Un jugador entra por el relay y el relay le ha dado esta ficha UDP. Lo implementa la tarea 7.</summary>
+    /// <summary>
+    /// Un jugador que entró por el relay ya tiene ficha UDP: se le dice al relay, para que reenvíe su UDP.
+    /// No bloquea. Si ahora no hay control, el jugador sigue con todo por TCP.
+    /// </summary>
     public void OnUdpToken(ClientConnection connection)
     {
+        if (connection.RelaySessionId == 0 || connection.UdpToken == 0)
+            return;
+
+        SendOnControl(new RelayUdpTokenMessage { SessionId = connection.RelaySessionId, Token = connection.UdpToken });
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -236,12 +245,14 @@ internal sealed class RelayLink
             reply = await ReadAsync(stream, register.Token);
         }
 
+        ulong udpSecret;
         switch (reply)
         {
             case RelayRegisteredMessage registered:
                 if (!ServerCode.TryNormalize(registered.Code ?? string.Empty, out string code))
                     throw new ProtocolException("El relay mandó un código inválido");
 
+                udpSecret = registered.UdpSecret;
                 _registeredThisConnection = true;
                 SetState(RelayLinkState.Registered, code, string.Empty);
                 break;
@@ -261,19 +272,92 @@ internal sealed class RelayLink
                 throw new ProtocolException($"Respuesta inesperada del relay al registrarse: {reply.Type}");
         }
 
-        // Registrado: los latidos salen por su cuenta y esta tarea lee el control. Si falla cualquiera de las dos,
-        // se cancela la otra y se cierra la conexión.
+        // Registrado: los latidos y el hola UDP salen por su cuenta y esta tarea lee el control. Si falla cualquiera
+        // de las dos primeras, se cancela todo y se cierra la conexión.
         using var session = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var control = new Control(stream, writeLock, session);
+        lock (_sync)
+            _control = control;
+
         Task heartbeats = HeartbeatLoopAsync(stream, writeLock, session);
+        Task hellos = UdpHelloLoopAsync(RelayUdpEndPoint(tcp), udpSecret, session.Token);
         try
         {
             await ReadLoopAsync(stream, session.Token);
         }
         finally
         {
+            lock (_sync)
+            {
+                if (_control == control)
+                    _control = null;
+            }
+
             session.Cancel();
             await heartbeats;
+            await hellos;
         }
+    }
+
+    /// <summary>El puerto UDP del relay: la misma dirección a la que se conectó el control, en el mismo puerto.</summary>
+    private IPEndPoint RelayUdpEndPoint(TcpClient tcp)
+    {
+        IPAddress address = ((IPEndPoint)tcp.Client.RemoteEndPoint!).Address;
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        return new IPEndPoint(address, _port);
+    }
+
+    /// <summary>
+    /// Manda el hola UDP desde el socket de juego nada más registrarse y luego cada <see cref="RelayLinkOptions.UdpHello"/>:
+    /// así el relay sabe por qué dirección le llega el UDP del servidor, y el router de casa deja pasar las respuestas.
+    /// </summary>
+    private async Task UdpHelloLoopAsync(IPEndPoint relay, ulong secret, CancellationToken ct)
+    {
+        byte[] hello = FrameCodec.EncodeUdp(new RelayUdpHelloMessage { UdpSecret = secret }, 0);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                _network.SendRawUdp(hello, relay);
+                await Task.Delay(_options.UdpHello, ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Manda un mensaje por el control actual en otra tarea, sin hacer esperar a quien llama (el bucle principal).
+    /// Si no sale, la conexión está rota: se corta para reconectar.
+    /// </summary>
+    private void SendOnControl(IMessage message)
+    {
+        Control? control;
+        lock (_sync)
+            control = _control;
+        if (control == null)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await WriteAsync(control.Stream, control.WriteLock, message, control.Session.Token);
+            }
+            catch (Exception ex) when (IsConnectionError(ex))
+            {
+                try
+                {
+                    control.Session.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Esa conexión ya terminó.
+                }
+            }
+        });
     }
 
     private async Task HeartbeatLoopAsync(NetworkStream stream, SemaphoreSlim writeLock, CancellationTokenSource session)
@@ -316,7 +400,12 @@ internal sealed class RelayLink
                     _ = AttachAsync(incoming, _cts.Token);
                     break;
 
-                // La tarea 7 añade RelayReachability y RelayUdpToken.
+                case RelayReachabilityMessage reachability:
+                    lock (_sync)
+                        _direct = _state == RelayLinkState.Registered && reachability.Tcp && reachability.Udp;
+                    _changed();
+                    break;
+
                 default:
                     Log.Warn($"El relay mandó un mensaje inesperado por el control: {message.Type}");
                     break;
@@ -420,4 +509,7 @@ internal sealed class RelayLink
 
     private static bool IsConnectionError(Exception ex) =>
         ex is IOException or SocketException or ObjectDisposedException or ProtocolException or OperationCanceledException;
+
+    /// <summary>Un control registrado: su flujo, el cerrojo de escritura y la cancelación de esa conexión.</summary>
+    private sealed record Control(NetworkStream Stream, SemaphoreSlim WriteLock, CancellationTokenSource Session);
 }

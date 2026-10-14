@@ -270,7 +270,7 @@ namespace MultiKerbal.Common.Messages
         public void Read(PacketReader reader) => UdpSecret = reader.ReadUInt64();
     }
 
-    /// <summary>Relay → servidor. Ficha UDP que el relay ha asignado a una sesión.</summary>
+    /// <summary>Servidor → relay. Ficha UDP que el servidor ha dado al jugador de una sesión del relay.</summary>
     public sealed class RelayUdpTokenMessage : IMessage
     {
         public MessageType Type => MessageType.RelayUdpToken;
@@ -291,7 +291,7 @@ namespace MultiKerbal.Common.Messages
         }
     }
 
-    /// <summary>Relay → servidor por UDP. Sonda de la comprobación de alcance.</summary>
+    /// <summary>Relay → servidor, por TCP (primera trama) o por UDP (ficha 0). Sonda de la comprobación de acceso.</summary>
     public sealed class RelayProbeMessage : IMessage
     {
         public MessageType Type => MessageType.RelayProbe;
@@ -303,7 +303,7 @@ namespace MultiKerbal.Common.Messages
         public void Read(PacketReader reader) => Nonce = reader.ReadUInt64();
     }
 
-    /// <summary>Servidor → relay por UDP. Respuesta a la sonda, con el mismo valor.</summary>
+    /// <summary>Servidor → relay, por donde llegó la sonda. Respuesta con el mismo nonce.</summary>
     public sealed class RelayProbeReplyMessage : IMessage
     {
         public MessageType Type => MessageType.RelayProbeReply;

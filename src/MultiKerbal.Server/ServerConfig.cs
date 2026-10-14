@@ -58,6 +58,13 @@ public sealed class ServerConfig
     /// <summary>Aparecer en la lista pública de servidores del relay (con <see cref="Relay"/>). Por defecto no: solo se entra con el código.</summary>
     public bool Public { get; set; } = false;
 
+    /// <summary>
+    /// Solo para los tests: puerto de juego que se anuncia al relay en lugar del real. Apuntándolo a un puerto
+    /// cerrado, la comprobación de acceso falla y los jugadores entran por el relay aunque estén en el mismo equipo.
+    /// </summary>
+    [JsonIgnore]
+    internal int? RelayAnnouncedPortOverride { get; set; }
+
     [JsonIgnore]
     public GameMode Mode { get; private set; } = Common.Progress.GameMode.Sandbox;
 

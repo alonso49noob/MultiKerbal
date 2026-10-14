@@ -50,9 +50,14 @@ internal sealed class TestClient : IDisposable
     }
 
     /// <summary>Entra con un código, como el mod, y exige que el servidor lo acepte.</summary>
-    public static TestClient JoinWithCode(string relayAddress, string code, string name)
+    public static TestClient JoinWithCode(string relayAddress, string code, string name) =>
+        JoinWithPlan(ConnectPlan.ForCode(relayAddress, code), name);
+
+    /// <summary>Conecta siguiendo el plan (directo, relay o los dos) y exige que el servidor lo acepte.</summary>
+    public static TestClient JoinWithPlan(ConnectPlan plan, string name)
     {
-        TestClient client = StartWithCode(relayAddress, code);
+        var client = new TestClient();
+        client.Net.Connect(plan);
         WaitUntil(() => client.Net.State != NetClientState.Connecting);
         if (client.Net.State != NetClientState.Connected)
             Assert.Fail($"No se pudo entrar con el código: {client.WaitForEvent(NetEventType.Disconnected).Reason}");

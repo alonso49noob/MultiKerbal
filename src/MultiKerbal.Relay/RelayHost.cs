@@ -11,10 +11,13 @@ namespace MultiKerbal.Relay;
 
 /// <summary>
 /// El relay: acepta conexiones TCP, mira cuál es su primer mensaje y las encamina. Esta parte lleva el registro
-/// de servidores (códigos permanentes, latidos, caducidad) y la consulta por código.
+/// de servidores (códigos permanentes, latidos, caducidad), la consulta por código y los sockets UDP (reenvío en
+/// <see cref="Port"/> y comprobaciones de acceso en <see cref="ProbePort"/>).
 /// </summary>
 public sealed partial class RelayHost
 {
+    private const int SioUdpConnReset = -1744830452;
+
     private readonly RelayOptions _options;
     private readonly object _registryLock = new();
 
@@ -26,9 +29,12 @@ public sealed partial class RelayHost
 
     private readonly CancellationTokenSource _cts = new();
     private readonly SessionBroker _broker;
+    private readonly UdpForwarder _forwarder;
+    private readonly ReachabilityProber _prober;
     private readonly ManualResetEventSlim _stopRequested = new(false);
     private CodeStore? _codes;
     private TcpListener? _listener;
+    private Socket? _udpSocket;
     private Socket? _probeSocket;
     private bool _stopping;
     private int _stopped;
@@ -36,7 +42,9 @@ public sealed partial class RelayHost
     internal RelayHost(RelayOptions options)
     {
         _options = options;
-        _broker = new SessionBroker(options, code => TryGetServer(code, out ServerSession? server) ? server : null);
+        _forwarder = new UdpForwarder(FindServer, FindServerBySecret);
+        _broker = new SessionBroker(options, FindServer, _forwarder);
+        _prober = new ReachabilityProber(options);
     }
 
     /// <summary>Puerto TCP y UDP real (si se pidió el 0, el que eligió el sistema).</summary>
@@ -57,6 +65,9 @@ public sealed partial class RelayHost
     /// <summary>Sesiones de jugadores por el relay abiertas ahora (esperando el enganche o pasando bytes).</summary>
     internal int RelaySessionCount => _broker.Count;
 
+    /// <summary>Comprobaciones de acceso directo terminadas (para los tests).</summary>
+    internal int ProbeCount => _prober.ProbeCount;
+
     internal static string NoServerText => Lang.T("No hay ningún servidor encendido con ese código", "There is no server running with that code");
 
     internal static string VersionMismatchText(int theirs) => Lang.T(
@@ -74,6 +85,23 @@ public sealed partial class RelayHost
             return _servers.TryGetValue(normalized, out session);
     }
 
+    private ServerSession? FindServer(string code) => TryGetServer(code, out ServerSession? server) ? server : null;
+
+    /// <summary>Servidor vivo con ese secreto UDP (el de su hola); null si no hay ninguno.</summary>
+    private ServerSession? FindServerBySecret(ulong secret)
+    {
+        lock (_registryLock)
+        {
+            foreach (ServerSession server in _servers.Values)
+            {
+                if (server.UdpSecret == secret)
+                    return server;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Arranca el relay. Lanza <see cref="InvalidDataException"/> si codes.json está dañado: no se arranca con
     /// la lista vacía porque se reasignarían códigos que los jugadores ya conocen.
@@ -85,6 +113,7 @@ public sealed partial class RelayHost
         {
             _listener = CreateListener(_options.Port);
             Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            _udpSocket = CreateUdpSocket(Port);
             _probeSocket = CreateUdpSocket(_options.ProbePort);
             ProbePort = ((IPEndPoint)_probeSocket.LocalEndPoint!).Port;
         }
@@ -94,6 +123,8 @@ public sealed partial class RelayHost
             throw;
         }
 
+        _forwarder.Start(_udpSocket, _cts.Token);
+        _prober.Start(_probeSocket, _cts.Token);
         _ = AcceptLoopAsync(_cts.Token);
         RelayLog.Info($"Relay escuchando en el puerto {Port} (TCP y UDP); comprobaciones desde el UDP {ProbePort}");
         RelayLog.Info($"{_codes.Count} código(s) guardado(s) en {Path.GetFullPath(_options.DataDirectory)}");
@@ -122,6 +153,7 @@ public sealed partial class RelayHost
         {
         }
 
+        _udpSocket?.Dispose();
         _probeSocket?.Dispose();
         foreach (ServerSession session in sessions)
             session.Close();
@@ -170,6 +202,10 @@ public sealed partial class RelayHost
             socket.Bind(new IPEndPoint(IPAddress.Any, port));
         }
 
+        // En Windows, un aviso ICMP de "puerto inalcanzable" (un jugador que se fue, una sonda a un puerto cerrado)
+        // haría fallar la siguiente lectura del socket.
+        if (OperatingSystem.IsWindows())
+            socket.IOControl(SioUdpConnReset, new byte[4], null);
         return socket;
     }
 
@@ -218,7 +254,8 @@ public sealed partial class RelayHost
                     ServerSession? session = await RegisterAsync(tcp, stream, remote, register, ct);
                     if (session != null)
                     {
-                        await session.RunAsync(ct);
+                        _prober.Watch(session, ct);
+                        await session.RunAsync((server, token) => _broker.SetUdpToken(server.Code, token.SessionId, token.Token), ct);
                         Unregister(session);
                     }
 
@@ -376,6 +413,7 @@ public sealed partial class RelayHost
         }
 
         session.Close();
+        _forwarder.ForgetServer(session);
         if (removed && !_stopping)
         {
             bool expired = DateTime.UtcNow - session.LastSeen >= _options.HeartbeatTimeout;
@@ -392,6 +430,7 @@ public sealed partial class RelayHost
             return NotFound(NoServerText);
 
         RelayServerInfo info = server.Info;
+        bool direct = server.IsDirect;
         return new RelayLookupResultMessage
         {
             Found = true,
@@ -399,9 +438,9 @@ public sealed partial class RelayHost
             GameProtocol = info.GameProtocol,
             ModVersion = info.ModVersion ?? string.Empty,
 
-            // La tarea 7 rellena la dirección directa cuando la comprobación de acceso la da por alcanzable.
-            DirectHost = string.Empty,
-            DirectPort = 0,
+            // Solo si la última comprobación pudo llegar por TCP y por UDP; si no, se entra por el relay.
+            DirectHost = direct ? server.RemoteAddress.ToString() : string.Empty,
+            DirectPort = direct ? server.GamePort : 0,
             Error = string.Empty,
         };
     }

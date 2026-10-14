@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Mods;
 using MultiKerbal.Server;
 using MultiKerbal.Server.Relay;
@@ -13,14 +16,20 @@ internal sealed class TestServer : IDisposable
     private readonly string _modPolicy;
     private readonly string _gameMode;
     private readonly string? _relayAddress;
+    private readonly int? _announcedPort;
 
     /// <param name="relayAddress">Dirección del relay (host:puerto). Sin ella el servidor no usa el relay, para que las pruebas no lleguen a Internet.</param>
-    public TestServer(string modPolicy = "warn", string gameMode = "sandbox", string? relayAddress = null)
+    /// <param name="reachableDirectly">
+    /// Con false, el servidor anuncia al relay un puerto cerrado: la comprobación de acceso falla y quien entra con
+    /// el código pasa por el relay, aunque todo esté en este equipo.
+    /// </param>
+    public TestServer(string modPolicy = "warn", string gameMode = "sandbox", string? relayAddress = null, bool reachableDirectly = true)
     {
         Log.ConsoleEnabled = false;
         _modPolicy = modPolicy;
         _gameMode = gameMode;
         _relayAddress = relayAddress;
+        _announcedPort = reachableDirectly ? null : ReserveFreePort();
         Host = StartHost();
     }
 
@@ -41,6 +50,29 @@ internal sealed class TestServer : IDisposable
     {
         _clients.Add(client);
         return client;
+    }
+
+    /// <summary>Espera a que el servidor se registre en el relay y devuelve su código (sin guion).</summary>
+    public string WaitForRelayCode(double seconds = 3)
+    {
+        RelayLink link = Host.RelayLink ?? throw new InvalidOperationException("El servidor no usa el relay");
+        Assert.True(TestRelay.WaitFor(() => link.State == RelayLinkState.Registered, seconds), "El servidor no se registró en el relay");
+        return link.Code;
+    }
+
+    /// <summary>Un puerto TCP libre ahora mismo (y por tanto cerrado, hasta que alguien lo abra).</summary>
+    public static int ReserveFreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
     }
 
     public void Restart()
@@ -83,6 +115,7 @@ internal sealed class TestServer : IDisposable
             GameMode = _gameMode,
             Relay = _relayAddress != null,
             RelayAddress = _relayAddress ?? string.Empty,
+            RelayAnnouncedPortOverride = _announcedPort,
         }, ShortRelayTimes);
         host.Start();
         return host;

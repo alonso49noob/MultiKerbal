@@ -411,6 +411,8 @@ public sealed partial class ServerHost
         player.Vote = new WarpVote { PlayerName = player.Name, Participating = false, Rate = 1.0, Mode = WarpMode.Rails };
         player.Mods = request.Mods ?? [];
         _network.RegisterUdpToken(player.Connection, CreateUdpToken());
+        if (player.Connection.RelaySessionId != 0)
+            _relay?.OnUdpToken(player.Connection);
 
         if (firstPlayer)
             _time.Resume(now);

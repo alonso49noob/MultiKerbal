@@ -12,30 +12,28 @@ namespace MultiKerbal.Relay;
 /// Jugadores que entran por el relay (diseño, 4.3). El jugador manda <see cref="RelayJoinMessage"/>; el relay crea
 /// una sesión y se lo avisa al servidor por su control con <see cref="RelayIncomingMessage"/>; el servidor abre una
 /// conexión nueva y manda <see cref="RelayAttachMessage"/>. Desde ahí el relay pasa los bytes tal cual entre las
-/// dos conexiones, con un tope de tráfico en cada sentido, hasta que una de las dos se cierra.
+/// dos conexiones, con un tope de tráfico en cada sentido, hasta que una de las dos se cierra. El UDP de la sesión
+/// (por <see cref="UdpForwarder"/>) comparte esos topes, y su ficha se olvida al cerrarse la sesión.
 /// </summary>
 internal sealed class SessionBroker
 {
     private const int BufferSize = 16 * 1024;
 
-    /// <summary>
-    /// Cuando un lado termina limpio, se pasa su FIN al otro y se le da este margen para cerrar por su cuenta.
-    /// Así lee todo lo que quedaba (por ejemplo el motivo de una expulsión) en vez de recibir un corte.
-    /// </summary>
-    private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(2);
-
     private readonly RelayOptions _options;
     private readonly Func<string, ServerSession?> _findServer;
+    private readonly UdpForwarder _udp;
     private readonly object _lock = new();
 
     /// <summary>Sesiones vivas (esperando el enganche o pasando bytes) por su id. Se toca con <see cref="_lock"/>.</summary>
     private readonly Dictionary<long, RelaySession> _sessions = new();
 
     /// <param name="findServer">Busca un servidor vivo por su código; null si no hay ninguno.</param>
-    public SessionBroker(RelayOptions options, Func<string, ServerSession?> findServer)
+    /// <param name="udp">Reenvío UDP, donde se dan de alta y de baja las fichas de las sesiones.</param>
+    public SessionBroker(RelayOptions options, Func<string, ServerSession?> findServer, UdpForwarder udp)
     {
         _options = options;
         _findServer = findServer;
+        _udp = udp;
     }
 
     public int Count
@@ -90,7 +88,7 @@ internal sealed class SessionBroker
             }
 
             RelayLog.Info($"[{code}] Jugador {remote} conectado por el relay (sesión {session.Id})");
-            await PipeAsync(tcp, stream, attachment.Tcp, attachment.Stream, ct);
+            await PipeAsync(session, tcp, stream, attachment.Tcp, attachment.Stream, ct);
             RelayLog.Info($"[{code}] Sesión {session.Id} terminada");
         }
         finally
@@ -122,6 +120,37 @@ internal sealed class SessionBroker
         await session.Finished.Task.WaitAsync(ct);
     }
 
+    /// <summary>
+    /// El servidor <paramref name="serverCode"/> avisa de la ficha UDP que dio al jugador de una sesión. Solo vale
+    /// para sesiones vivas de ese mismo servidor; una ficha nueva sustituye a la anterior de la sesión.
+    /// </summary>
+    public void SetUdpToken(string serverCode, long sessionId, ulong token)
+    {
+        lock (_lock)
+        {
+            if (token == 0 || !_sessions.TryGetValue(sessionId, out RelaySession? session) || session.Code != serverCode)
+            {
+                RelayLog.Warn($"[{ServerCode.Format(serverCode)}] Ficha UDP ignorada: la sesión {sessionId} no existe o no es de este servidor");
+                return;
+            }
+
+            if (session.UdpToken == token)
+                return;
+
+            var route = new UdpRoute(session.Code, session.Up, session.Down);
+            if (!_udp.TryAdd(token, route))
+            {
+                RelayLog.Warn($"[{ServerCode.Format(serverCode)}] Ficha UDP ignorada: ya la usa otra sesión");
+                return;
+            }
+
+            if (session.UdpRoute != null)
+                _udp.Remove(session.UdpToken, session.UdpRoute);
+            session.UdpToken = token;
+            session.UdpRoute = route;
+        }
+    }
+
     private RelaySession? TryOpen(string code)
     {
         lock (_lock)
@@ -134,7 +163,7 @@ internal sealed class SessionBroker
                 id = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8)) & long.MaxValue;
             while (id == 0 || _sessions.ContainsKey(id));
 
-            var session = new RelaySession(id, BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8)), code);
+            var session = new RelaySession(id, BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8)), code, NewLimiter(), NewLimiter());
             _sessions[id] = session;
             return session;
         }
@@ -150,12 +179,16 @@ internal sealed class SessionBroker
         deadline.CancelAfter(_options.AttachTimeout);
         try
         {
-            await server.SendAsync(new RelayIncomingMessage
+            // El plazo solo corta la espera del turno de escritura y la de aquí: una trama empezada sigue hasta el
+            // final aunque se deje de esperar, para no estropear el control (si se atasca, la sesión se cierra sola).
+            Task incoming = server.SendAsync(new RelayIncomingMessage
             {
                 SessionId = session.Id,
                 Secret = session.Secret,
                 ClientAddress = remote.ToString(),
             }, deadline.Token);
+            _ = incoming.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            await incoming.WaitAsync(deadline.Token);
             return await session.Attach.Task.WaitAsync(deadline.Token);
         }
         catch (Exception ex) when (RelayWire.IsConnectionError(ex) && !ct.IsCancellationRequested)
@@ -167,16 +200,16 @@ internal sealed class SessionBroker
     }
 
     /// <summary>Pasa bytes en los dos sentidos hasta que se cierre un lado; luego cierra los dos.</summary>
-    private async Task PipeAsync(TcpClient player, NetworkStream playerStream, TcpClient server, NetworkStream serverStream, CancellationToken ct)
+    private async Task PipeAsync(RelaySession session, TcpClient player, NetworkStream playerStream, TcpClient server, NetworkStream serverStream, CancellationToken ct)
     {
         using var pumps = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        Task up = PumpAsync(playerStream, server, serverStream, NewLimiter(), pumps.Token);
-        Task down = PumpAsync(serverStream, player, playerStream, NewLimiter(), pumps.Token);
+        Task up = PumpAsync(playerStream, server, serverStream, session.Up, pumps.Token);
+        Task down = PumpAsync(serverStream, player, playerStream, session.Down, pumps.Token);
         try
         {
             Task first = await Task.WhenAny(up, down);
             if (first.IsCompletedSuccessfully)
-                await Task.WhenAny(first == up ? down : up, Task.Delay(CloseGrace, pumps.Token));
+                await Task.WhenAny(first == up ? down : up, Task.Delay(_options.CloseGrace, pumps.Token));
         }
         finally
         {
@@ -209,16 +242,27 @@ internal sealed class SessionBroker
             await toStream.WriteAsync(buffer.AsMemory(0, read), ct);
         }
 
-        to.Client.Shutdown(SocketShutdown.Send);
+        try
+        {
+            to.Client.Shutdown(SocketShutdown.Send);
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or NullReferenceException)
+        {
+            // El otro lado ya se cerró (y su socket se liberó) mientras tanto.
+        }
     }
 
     private RateLimiter NewLimiter() => new(_options.BytesPerSecond, () => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
 
-    /// <summary>Quita la sesión y despierta a quien espera por ella (el enganche, si lo hubo).</summary>
+    /// <summary>Quita la sesión, olvida su ficha UDP y despierta a quien espera por ella (el enganche, si lo hubo).</summary>
     private void Close(RelaySession session)
     {
         lock (_lock)
+        {
             _sessions.Remove(session.Id);
+            if (session.UdpRoute != null)
+                _udp.Remove(session.UdpToken, session.UdpRoute);
+        }
 
         session.Attach.TrySetCanceled();
         session.Finished.TrySetResult();
@@ -242,11 +286,13 @@ internal sealed class SessionBroker
 
     private sealed class RelaySession
     {
-        public RelaySession(long id, ulong secret, string code)
+        public RelaySession(long id, ulong secret, string code, RateLimiter up, RateLimiter down)
         {
             Id = id;
             Secret = secret;
             Code = code;
+            Up = up;
+            Down = down;
         }
 
         public long Id { get; }
@@ -255,6 +301,18 @@ internal sealed class SessionBroker
 
         /// <summary>Código (sin guion) del servidor de la sesión, para el límite de sesiones por servidor.</summary>
         public string Code { get; }
+
+        /// <summary>Tope del sentido jugador → servidor, para la TCP y el UDP.</summary>
+        public RateLimiter Up { get; }
+
+        /// <summary>Tope del sentido servidor → jugador, para la TCP y el UDP.</summary>
+        public RateLimiter Down { get; }
+
+        /// <summary>Ficha UDP que dio el servidor (0 si aún no). Se toca con el cerrojo del broker.</summary>
+        public ulong UdpToken { get; set; }
+
+        /// <summary>Ruta UDP dada de alta con <see cref="UdpToken"/>; null si no hay. Se toca con el cerrojo del broker.</summary>
+        public UdpRoute? UdpRoute { get; set; }
 
         /// <summary>Se completa con la conexión del servidor, o se cancela si caduca o la sesión termina antes.</summary>
         public TaskCompletionSource<Attachment> Attach { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

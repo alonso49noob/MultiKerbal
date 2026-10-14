@@ -5,8 +5,9 @@ using MultiKerbal.Common.Messages;
 namespace MultiKerbal.Relay;
 
 /// <summary>
-/// Un servidor registrado: su conexión de control (permanente), los datos del último latido y el secreto UDP.
-/// Si no llega nada por el control en <see cref="RelayOptions.HeartbeatTimeout"/>, se cierra.
+/// Un servidor registrado: su conexión de control (permanente), los datos del último latido, el secreto UDP con su
+/// dirección UDP y el resultado de la comprobación de acceso directo. Si no llega nada por el control en
+/// <see cref="RelayOptions.HeartbeatTimeout"/>, se cierra.
 /// </summary>
 internal sealed class ServerSession
 {
@@ -15,9 +16,15 @@ internal sealed class ServerSession
     private readonly TimeSpan _heartbeatTimeout;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _closed = new();
+
+    /// <summary>Peticiones de repetir la comprobación (como mucho una pendiente).</summary>
+    private readonly SemaphoreSlim _recheck = new(0, 1);
     private long _lastSeenTicks;
     private int _isClosed;
     private volatile RelayServerInfo _info;
+    private volatile EndPoint? _udpEndPoint;
+    private volatile bool _directTcp;
+    private volatile bool _directUdp;
 
     public ServerSession(TcpClient tcp, string code, ulong udpSecret, RelayServerInfo info, int gamePort, IPAddress remoteAddress, TimeSpan heartbeatTimeout)
     {
@@ -49,18 +56,57 @@ internal sealed class ServerSession
 
     public DateTime RegisteredAt { get; }
 
+    /// <summary>Dirección desde la que llega el hola UDP del servidor (su socket de juego); null hasta el primero.</summary>
+    public EndPoint? UdpEndPoint
+    {
+        get => _udpEndPoint;
+        set => _udpEndPoint = value;
+    }
+
+    /// <summary>La última comprobación pudo abrir una TCP al puerto de juego.</summary>
+    public bool DirectTcp
+    {
+        get => _directTcp;
+        set => _directTcp = value;
+    }
+
+    /// <summary>La última comprobación recibió respuesta por UDP desde el socket de comprobaciones.</summary>
+    public bool DirectUdp
+    {
+        get => _directUdp;
+        set => _directUdp = value;
+    }
+
+    /// <summary>Se puede entrar sin pasar por el relay: funcionan la TCP y el UDP.</summary>
+    public bool IsDirect => _directTcp && _directUdp;
+
+    /// <summary>Se cancela al cerrar la sesión.</summary>
+    public CancellationToken ClosedToken => _closed.Token;
+
     public DateTime LastSeen => new(Interlocked.Read(ref _lastSeenTicks), DateTimeKind.Utc);
 
     public bool IsClosed => Volatile.Read(ref _isClosed) != 0;
 
-    /// <summary>Manda un mensaje por el control. Seguro entre hilos.</summary>
+    /// <summary>
+    /// Manda un mensaje por el control. Seguro entre hilos. <paramref name="ct"/> solo corta la espera del turno
+    /// de escritura: una trama empezada no se corta nunca a medias, porque estropearía el control. Si la escritura
+    /// no termina en el plazo de caducidad, o falla, se cierra la sesión.
+    /// </summary>
     public async Task SendAsync(IMessage message, CancellationToken ct)
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _closed.Token);
-        await _writeLock.WaitAsync(linked.Token);
+        using (var wait = CancellationTokenSource.CreateLinkedTokenSource(ct, _closed.Token))
+            await _writeLock.WaitAsync(wait.Token);
+
         try
         {
-            await RelayWire.WriteAsync(_stream, message, linked.Token);
+            using var write = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
+            write.CancelAfter(_heartbeatTimeout);
+            await RelayWire.WriteAsync(_stream, message, write.Token);
+        }
+        catch (Exception ex) when (RelayWire.IsConnectionError(ex))
+        {
+            Close();
+            throw;
         }
         finally
         {
@@ -68,11 +114,29 @@ internal sealed class ServerSession
         }
     }
 
+    /// <summary>Pide repetir la comprobación de acceso directo. Si ya hay una pedida, no se acumula otra.</summary>
+    public void RequestRecheck()
+    {
+        try
+        {
+            if (_recheck.CurrentCount == 0)
+                _recheck.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Otra petición llegó a la vez: ya hay una pendiente.
+        }
+    }
+
+    /// <summary>Espera hasta que se pida otra comprobación o pase <paramref name="interval"/>.</summary>
+    public async Task WaitForRecheckAsync(TimeSpan interval, CancellationToken ct) => await _recheck.WaitAsync(interval, ct);
+
     /// <summary>
     /// Lee el control hasta que se cierre, se corte o caduque. Cada mensaje cuenta como señal de vida,
     /// y el plazo corre desde el principio de cada mensaje (un mensaje a medias no lo alarga).
     /// </summary>
-    public async Task RunAsync(CancellationToken ct)
+    /// <param name="onUdpToken">Se llama con cada <see cref="RelayUdpTokenMessage"/> del servidor, desde este hilo.</param>
+    public async Task RunAsync(Action<ServerSession, RelayUdpTokenMessage> onUdpToken, CancellationToken ct)
     {
         try
         {
@@ -93,7 +157,11 @@ internal sealed class ServerSession
                         break;
 
                     case RelayRecheckMessage:
-                        // La tarea 7 repite aquí la comprobación de acceso directo.
+                        RequestRecheck();
+                        break;
+
+                    case RelayUdpTokenMessage token:
+                        onUdpToken(this, token);
                         break;
 
                     default:

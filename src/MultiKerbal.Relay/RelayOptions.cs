@@ -20,6 +20,13 @@ internal sealed class RelayOptions
     /// <summary>Plazo para que el servidor abra la conexión de enganche de una sesión.</summary>
     public TimeSpan AttachTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Cuando un lado de una sesión termina limpio, se pasa su FIN al otro y se le da este margen para cerrar por su
+    /// cuenta. Así lee todo lo que quedaba (por ejemplo el motivo de una expulsión) en vez de recibir un corte.
+    /// </summary>
+    public TimeSpan CloseGrace { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Cada cuánto se repite la comprobación de acceso directo de cada servidor.</summary>
     public TimeSpan RecheckInterval { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>Plazo de cada comprobación de acceso directo.</summary>

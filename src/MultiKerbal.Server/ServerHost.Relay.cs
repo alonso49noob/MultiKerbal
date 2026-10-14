@@ -33,7 +33,7 @@ public sealed partial class ServerHost
             _relay = new RelayLink(
                 Config.RelayAddress,
                 key,
-                Port,
+                Config.RelayAnnouncedPortOverride ?? Port,
                 () => _relayInfo,
                 _network,
                 () => _inbound.Enqueue(new ServerEvent(ServerEventKind.RelayChanged)),

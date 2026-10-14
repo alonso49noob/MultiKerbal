@@ -18,6 +18,9 @@ internal sealed class NetworkServer
     private const int SioUdpConnReset = -1744830452;
     private static readonly TimeSpan KickGrace = TimeSpan.FromSeconds(2);
 
+    /// <summary>Plazo para la primera trama de una conexión aceptada (hasta entonces no se avisa al bucle principal).</summary>
+    private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(ProtocolInfo.HandshakeTimeoutSeconds);
+
     private readonly ConcurrentQueue<ServerEvent> _inbound;
     private readonly ServerClock _clock;
     private readonly ConcurrentDictionary<int, ClientConnection> _connections = new();
@@ -71,6 +74,18 @@ internal sealed class NetworkServer
     {
         connection.UdpToken = token;
         _byToken[token] = connection;
+    }
+
+    /// <summary>Manda un datagrama ya codificado desde el socket de juego (el hola UDP al relay). Si falla, se pierde.</summary>
+    public void SendRawUdp(byte[] datagram, EndPoint target)
+    {
+        try
+        {
+            _udp?.SendTo(datagram, SocketFlags.None, target);
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+        {
+        }
     }
 
     public void Send(ClientConnection connection, IMessage message, Delivery delivery = Delivery.Reliable)
@@ -209,7 +224,7 @@ internal sealed class NetworkServer
 
             tcp.NoDelay = true;
             string remoteLabel = tcp.Client.RemoteEndPoint?.ToString() ?? "?";
-            Register(new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now, remoteLabel, relaySessionId: 0));
+            Register(new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now, remoteLabel, relaySessionId: 0), announce: false);
         }
     }
 
@@ -221,40 +236,69 @@ internal sealed class NetworkServer
     {
         tcp.NoDelay = true;
         var connection = new ClientConnection(Interlocked.Increment(ref _nextConnectionId), tcp, _clock.Now, remoteLabel, relaySessionId);
-        Register(connection);
+        Register(connection, announce: true);
         return connection;
     }
 
     /// <summary>Conexiones abiertas ahora mismo (para los tests).</summary>
     internal ClientConnection[] Connections => _connections.Values.ToArray();
 
-    /// <summary>Da de alta la conexión, avisa al bucle principal y arranca su lectura y su envío.</summary>
-    private void Register(ClientConnection connection)
+    /// <summary>
+    /// Da de alta la conexión y arranca su lectura y su envío. Con <paramref name="announce"/>, avisa ya al bucle
+    /// principal; si no, el aviso espera a la primera trama, porque las que solo preguntan (la comprobación del
+    /// relay) se contestan aquí y se cierran sin crear jugador.
+    /// </summary>
+    private void Register(ClientConnection connection, bool announce)
     {
         _connections[connection.Id] = connection;
-        _inbound.Enqueue(new ServerEvent(ServerEventKind.Connected, connection));
-        _ = ReceiveLoopAsync(connection, _cts.Token);
+        if (announce)
+            _inbound.Enqueue(new ServerEvent(ServerEventKind.Connected, connection));
+        _ = ReceiveLoopAsync(connection, announce, _cts.Token);
         _ = SendLoopAsync(connection, _cts.Token);
     }
 
-    private async Task ReceiveLoopAsync(ClientConnection connection, CancellationToken ct)
+    private async Task ReceiveLoopAsync(ClientConnection connection, bool announced, CancellationToken ct)
     {
         string reason = "Conexión cerrada por el cliente";
+        bool answered = false;
         try
         {
             NetworkStream stream = connection.Tcp.GetStream();
             var header = new byte[FrameCodec.TcpHeaderSize];
+            using var firstFrame = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            firstFrame.CancelAfter(FirstFrameTimeout);
             while (!ct.IsCancellationRequested)
             {
-                await stream.ReadExactlyAsync(header, ct);
+                // Hasta que la conexión se anuncia, la trama tiene que llegar en plazo (luego vigila el bucle principal).
+                CancellationToken read = announced ? ct : firstFrame.Token;
+                await stream.ReadExactlyAsync(header, read);
                 FrameCodec.ParseTcpHeader(header, out int payloadLength, out ushort type);
                 var payload = new byte[payloadLength];
-                await stream.ReadExactlyAsync(payload, ct);
+                await stream.ReadExactlyAsync(payload, read);
 
                 connection.MarkReceived(_clock.Now);
                 Interlocked.Add(ref _bytesReceived, FrameCodec.TcpHeaderSize + payloadLength);
 
                 IMessage message = FrameCodec.DecodePayload(type, payload, 0, payloadLength);
+                if (answered)
+                    continue; // Ya se contestó y se está cerrando: lo que llegue después no cuenta.
+
+                if (!announced)
+                {
+                    if (message is RelayProbeMessage probe)
+                    {
+                        // Comprobación de acceso del relay: se contesta con el mismo nonce y se cierra.
+                        SendFrame(connection, FrameCodec.EncodeTcp(new RelayProbeReplyMessage { Nonce = probe.Nonce }));
+                        connection.CloseReason = "Comprobación de acceso del relay";
+                        connection.CompleteOutgoing();
+                        answered = true;
+                        continue;
+                    }
+
+                    announced = true;
+                    _inbound.Enqueue(new ServerEvent(ServerEventKind.Connected, connection));
+                }
+
                 if (message is PingMessage ping)
                 {
                     // Responder aquí, sin pasar por la cola del bucle principal, para no inflar la latencia medida.
@@ -331,6 +375,15 @@ internal sealed class NetworkServer
 
             if (!FrameCodec.TryDecodeUdp(buffer, result.ReceivedBytes, out ulong token, out IMessage? message) || message is null)
                 continue;
+
+            // Ficha 0: la comprobación de acceso del relay. Se contesta a quien la mandó (su socket de comprobaciones).
+            if (token == 0)
+            {
+                if (message is RelayProbeMessage probe)
+                    SendRawUdp(FrameCodec.EncodeUdp(new RelayProbeReplyMessage { Nonce = probe.Nonce }, 0), result.RemoteEndPoint);
+                continue;
+            }
+
             if (!_byToken.TryGetValue(token, out ClientConnection? connection) || connection.IsClosed)
                 continue;
 

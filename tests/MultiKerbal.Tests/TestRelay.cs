@@ -30,6 +30,7 @@ internal sealed class TestRelay : IDisposable
             FirstMessageTimeout = TimeSpan.FromSeconds(3),
             AttachTimeout = TimeSpan.FromSeconds(3),
             ProbeTimeout = TimeSpan.FromSeconds(1),
+            CloseGrace = TimeSpan.FromMilliseconds(300),
         };
         configure?.Invoke(_options);
         Host = StartHost();
@@ -193,6 +194,22 @@ internal sealed class RawRelayClient : IDisposable
         var buffer = new byte[count];
         ReadFully(buffer, count, allowEof: false);
         return buffer;
+    }
+
+    /// <summary>
+    /// Lee el siguiente mensaje de un control de servidor, saltándose los resultados de la comprobación de acceso
+    /// (<see cref="RelayReachabilityMessage"/>), que el relay manda por su cuenta en cualquier momento.
+    /// </summary>
+    public T ReceiveControl<T>(double seconds = 4)
+        where T : class, IMessage
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (true)
+        {
+            IMessage? message = Receive(Math.Max(0.001, (deadline - DateTime.UtcNow).TotalSeconds));
+            if (message is not RelayReachabilityMessage)
+                return Assert.IsType<T>(message);
+        }
     }
 
     /// <summary>Manda y espera la respuesta de la misma conexión.</summary>

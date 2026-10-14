@@ -1,13 +1,10 @@
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Relay;
 using MultiKerbal.Relay;
 using MultiKerbal.Server.Net;
-using MultiKerbal.Server.Relay;
 
 namespace MultiKerbal.Tests;
 
@@ -16,26 +13,11 @@ public sealed class RelayJoinTests
     // El relay de pruebas caduca a 1 s; aquí nadie debe caducar.
     private static readonly Action<RelayOptions> LongLived = o => o.HeartbeatTimeout = TimeSpan.FromSeconds(30);
 
-    private static string RegisteredCode(TestServer server)
-    {
-        RelayLink link = server.Host.RelayLink ?? throw new InvalidOperationException("El servidor no usa el relay");
-        Assert.True(TestRelay.WaitFor(() => link.State == RelayLinkState.Registered, seconds: 3));
-        return link.Code;
-    }
-
-    private static int ReserveFreePort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        try
-        {
-            return ((IPEndPoint)listener.LocalEndpoint).Port;
-        }
-        finally
-        {
-            listener.Stop();
-        }
-    }
+    /// <summary>
+    /// Servidor real que no se puede alcanzar directamente (anuncia un puerto cerrado): quien entra con el código
+    /// pasa siempre por el relay, que es lo que prueban estos tests.
+    /// </summary>
+    private static TestServer RelayOnlyServer(TestRelay relay) => new(relayAddress: relay.RelayAddress, reachableDirectly: false);
 
     /// <summary>Un servidor "en bruto" registrado en el relay; devuelve su código.</summary>
     private static string RegisterRawServer(RawRelayClient control, byte seed, int gameProtocol = ProtocolInfo.Version)
@@ -49,8 +31,8 @@ public sealed class RelayJoinTests
     public void Player_JoinsWithACode_ThroughTheRelay_AndChatFlowsBothWays()
     {
         using var relay = new TestRelay(LongLived);
-        using var server = new TestServer(relayAddress: relay.RelayAddress);
-        string code = RegisteredCode(server);
+        using var server = RelayOnlyServer(relay);
+        string code = server.WaitForRelayCode();
 
         TestClient jeb = server.Track(TestClient.JoinWithCode(relay.RelayAddress, ServerCode.Format(code).ToLowerInvariant(), "Jeb"));
 
@@ -72,8 +54,8 @@ public sealed class RelayJoinTests
     public void AdoptedConnection_ShowsThePlayerAddress_ButIsNotLoopback()
     {
         using var relay = new TestRelay(LongLived);
-        using var server = new TestServer(relayAddress: relay.RelayAddress);
-        string code = RegisteredCode(server);
+        using var server = RelayOnlyServer(relay);
+        string code = server.WaitForRelayCode();
 
         server.Track(TestClient.JoinWithCode(relay.RelayAddress, code, "Jeb"));
         server.Join("Bill");
@@ -92,8 +74,8 @@ public sealed class RelayJoinTests
     public void Kick_DisconnectsThePlayerThroughTheRelay_AndFreesTheSession()
     {
         using var relay = new TestRelay(LongLived);
-        using var server = new TestServer(relayAddress: relay.RelayAddress);
-        string code = RegisteredCode(server);
+        using var server = RelayOnlyServer(relay);
+        string code = server.WaitForRelayCode();
         TestClient jeb = server.Track(TestClient.JoinWithCode(relay.RelayAddress, code, "Jeb"));
         Assert.Equal(1, relay.Host.RelaySessionCount);
 
@@ -116,7 +98,7 @@ public sealed class RelayJoinTests
     [Fact]
     public void RelayDown_SaysTheRelayCannotBeReached()
     {
-        int port = ReserveFreePort();
+        int port = TestServer.ReserveFreePort();
         using TestClient client = TestClient.StartWithCode($"127.0.0.1:{port}", "K7M-Q2P");
 
         Assert.Contains("No se puede contactar con el relay", client.WaitForEvent(NetEventType.Disconnected).Reason);
@@ -143,8 +125,8 @@ public sealed class RelayJoinTests
             o.HeartbeatTimeout = TimeSpan.FromSeconds(30);
             o.MaxSessionsPerServer = 1;
         });
-        using var server = new TestServer(relayAddress: relay.RelayAddress);
-        string code = RegisteredCode(server);
+        using var server = RelayOnlyServer(relay);
+        string code = server.WaitForRelayCode();
         TestClient jeb = server.Track(TestClient.JoinWithCode(relay.RelayAddress, code, "Jeb"));
 
         using (TestClient bill = TestClient.StartWithCode(relay.RelayAddress, code))
@@ -171,7 +153,7 @@ public sealed class RelayJoinTests
         using TestClient client = TestClient.StartWithCode(relay.RelayAddress, code);
 
         // El relay avisa al servidor (que no hace nada) y, pasado el plazo de enganche, contesta al jugador.
-        var incoming = Assert.IsType<RelayIncomingMessage>(control.Receive());
+        var incoming = control.ReceiveControl<RelayIncomingMessage>();
         Assert.Contains("127.0.0.1", incoming.ClientAddress);
         Assert.Contains("El servidor no responde a través del relay", client.WaitForEvent(NetEventType.Disconnected).Reason);
         Assert.True(TestRelay.WaitFor(() => relay.Host.RelaySessionCount == 0, seconds: 1));
@@ -189,7 +171,7 @@ public sealed class RelayJoinTests
         string code = RegisterRawServer(control, seed: 6);
         RawRelayClient player = relay.Connect();
         player.Send(new RelayJoinMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = code });
-        var incoming = Assert.IsType<RelayIncomingMessage>(control.Receive());
+        var incoming = control.ReceiveControl<RelayIncomingMessage>();
 
         RawRelayClient intruder = relay.Connect();
         intruder.Send(new RelayAttachMessage { RelayVersion = ProtocolInfo.RelayVersion, SessionId = incoming.SessionId, Secret = incoming.Secret + 1 });
@@ -213,7 +195,7 @@ public sealed class RelayJoinTests
 
         RawRelayClient player = relay.Connect();
         player.Send(new RelayJoinMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = code });
-        var incoming = Assert.IsType<RelayIncomingMessage>(control.Receive());
+        var incoming = control.ReceiveControl<RelayIncomingMessage>();
         RawRelayClient attach = relay.Connect();
         attach.Send(new RelayAttachMessage { RelayVersion = ProtocolInfo.RelayVersion, SessionId = incoming.SessionId, Secret = incoming.Secret });
         Assert.True(Assert.IsType<RelayJoinResultMessage>(player.Receive()).Ok);
@@ -238,7 +220,7 @@ public sealed class RelayJoinTests
         Assert.InRange(await upTime, 0.8, 3);
         Assert.InRange(await downTime, 0.8, 3);
 
-        // Al cerrar un lado, el relay le pasa el cierre al otro y, como mucho tras su margen de 2 s, olvida la sesión.
+        // Al cerrar un lado, el relay le pasa el cierre al otro y, como mucho tras su margen (corto en las pruebas), olvida la sesión.
         player.Dispose();
         Assert.True(attach.WaitForClose(seconds: 1));
         Assert.True(TestRelay.WaitFor(() => relay.Host.RelaySessionCount == 0, seconds: 3));
