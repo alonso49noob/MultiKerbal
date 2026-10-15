@@ -18,6 +18,8 @@ Mod multijugador para **Kerbal Space Program 1.12.5**: servidor dedicado y un ú
 - **Progreso compartido (en pruebas).** En partidas de ciencia o carrera, la ciencia, las tecnologías, los experimentos hechos, los fondos, la reputación, las piezas compradas, los edificios y los contratos aceptados son de todos. El plantel (contrataciones y muertes) se comparte siempre.
 - **Acoplamiento entre jugadores.** Cuando una nave libre se acerca a menos de 2,2 km, tu partida se encarga de su física: los puertos se tocan, las naves chocan y se funden como en un jugador.
 - **Control compartido.** Quien pilota puede nombrar copiloto a otro jugador: los mandos del copiloto viajan por la red y se suman a los suyos. También puedes pedir el control de una nave ajena.
+- **Entrar con un código.** Quien hospeda recibe un código corto (`K7M-Q2P`) y sus amigos lo escriben en vez de una IP: sin abrir puertos en el router y aunque tengas CGNAT. Si el servidor es accesible directamente se entra directo; si no, el tráfico pasa por un *relay*.
+- **Lista pública.** Los servidores que quieran salen en una lista dentro del juego (botón **Lista**), con jugadores, contraseña, versión y tipo de conexión.
 - **Control de mods.** El servidor recuerda la lista de mods del primer jugador que entra. Antes de entrar en la partida ves esa lista comparada con la tuya: en verde lo que coincide y en rojo lo que falta o sobra.
 
 ## Instalación
@@ -30,6 +32,8 @@ Hacen falta dos cosas: **el mod**, que instala cada jugador en su KSP, y **el se
 | **MultiKerbal Server** *x.y.z* | `MultiKerbal-Server-x.y.z.zip` | Quien aloja la partida (lado del servidor). |
 
 Todos, servidor incluido, deben usar el mismo número de versión.
+
+> **Importante:** la **0.2.0** no es compatible con la **0.1.x**. Un mod 0.1.x no puede entrar a un servidor 0.2.0, ni al revés (el protocolo pasó de la versión 5 a la 6): el que intente entrar recibe el aviso de versión incompatible. Actualiza el mod y el servidor a la vez.
 
 ### 1. El mod (cada jugador)
 
@@ -69,13 +73,24 @@ El mod no necesita otros mods. Solo funciona con KSP 1.12.x.
 5. Pasa a los demás la dirección que deben usar:
    - **Mismo PC:** `127.0.0.1`
    - **Misma red de casa:** tu IP local (en Windows, `ipconfig` → *Dirección IPv4*, p. ej. `192.168.1.20`).
-   - **Por Internet:** hay cuatro formas: red local virtual (Tailscale), túnel (playit.gg), abrir el puerto **6750** (TCP y UDP) en el router o un servidor en la nube. El botón **Hospedar** de la ventana MultiKerbal te ayuda con cualquiera de ellas desde el juego, y [docs/HOSTING.es.md](docs/HOSTING.es.md) las explica paso a paso.
+   - **Por Internet, con el código:** al arrancar, el servidor se registra en el relay y muestra un código tipo `K7M-Q2P` (escribe `relay` en su consola para verlo, o míralo en el botón **Hospedar** del juego). Pásalo a tus amigos: no hace falta abrir puertos ni instalar nada más. Es lo más sencillo.
+   - **Por Internet, con una IP:** hay otras cuatro formas: red local virtual (Tailscale), túnel (playit.gg), abrir el puerto **6750** (TCP y UDP) en el router o un servidor en la nube. [docs/HOSTING.es.md](docs/HOSTING.es.md) las explica paso a paso.
+
+Si quieres que tu servidor salga en la lista pública, escribe `public on` en su consola (o marca *Mostrar en la lista pública* en **Hospedar**). Por defecto no sale: solo entra quien tenga el código.
+
+> **Sin cifrar:** el tráfico del juego no va cifrado, ni por IP ni por el relay. Cuando un jugador entra *por el relay*, quien lo administra podría ver ese tráfico. Si el servidor es accesible directamente, los jugadores entran directos y no pasa por el relay. Más en [docs/RELAY.md](docs/RELAY.md), que también explica cómo montar tu propio relay.
 
 El universo se guarda en la carpeta `Universe`, junto al servidor, cada minuto y siempre que lo cierras con `stop` o Ctrl+C. Haz copia de esa carpeta si no quieres perderlo.
 
 ### 3. Conectarse
 
-En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre, la dirección del servidor (si pegas `dirección:puerto` de una vez, el puerto se rellena solo), el puerto (`6750` si no lo cambiaste) y la clave del servidor si la tiene. Pulsa **Conectar y jugar**.
+En el menú principal de KSP, rellena la ventana MultiKerbal: tu nombre y el servidor, que puede ser:
+
+- **Un código** (`K7M-Q2P`): escríbelo como quieras, `k7m q2p` y `K7MQ2P` valen igual. El puerto no hace falta.
+- **Una IP o un nombre** (si pegas `dirección:puerto` de una vez, el puerto se rellena solo), con el puerto (`6750` si no lo cambiaste).
+- **Uno de la lista:** el botón **Lista** abre los servidores públicos; elige uno y pulsa *Unirse*. Si tiene contraseña, te pide escribirla.
+
+Añade la clave del servidor si la tiene y pulsa **Conectar y jugar**. Con un código, si el servidor es accesible directamente entras directo; si no, entras por el relay sin que hagas nada.
 
 **Tu contraseña** es la de tu cuenta de jugador, distinta de la clave del servidor. La primera vez que entras con un nombre, ese nombre queda registrado con la contraseña que pongas (al menos 4 caracteres); después solo entra quien la sepa. Si la olvidas, el administrador puede borrar tu cuenta (`account delete <nombre>`) y eliges otra al volver a entrar. *Recordarla* la guarda en este ordenador.
 
@@ -127,9 +142,12 @@ Si tus mods no coinciden con los del servidor, antes de empezar ves una lista co
 | `Language` | `es` | Idioma de los mensajes de chat y motivos de rechazo que manda el servidor: `es` o `en`. |
 | `GameMode` | `sandbox` | `sandbox` (sin progreso), `science` (ciencia y tecnologías compartidas) o `career` (además fondos y reputación). |
 | `StartingFunds` | `25000` | Fondos con los que empieza una carrera nueva. |
+| `Relay` | `true` | Registrarse en el relay: da un código para entrar sin abrir puertos y permite salir en la lista pública. Con `false` el servidor solo admite entrar por IP. |
+| `RelayAddress` | `multikerbal.duckdns.org:6760` | Dirección del relay (`nombre` o `nombre:puerto`). Cámbiala solo si usas otro relay; ver [docs/RELAY.md](docs/RELAY.md). |
+| `Public` | `false` | Salir en la lista pública de servidores del relay. Con `false`, solo entra quien tenga el código o la IP. |
 | `DataDirectory` | `Universe` | Dónde se guarda el universo. |
 
-Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|compartida|publica]`, `account` (cuentas) y `account delete <jugador>` (si alguien olvidó su contraseña), `progress`, `mods [jugador|set <jugador>]`, `warp`, `say <texto>`, `kick <jugador> [motivo]`, `time`, `save`, `stop`. Escribe `help` para verlos en la consola.
+Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|compartida|publica]`, `account` (cuentas) y `account delete <jugador>` (si alguien olvidó su contraseña), `progress`, `mods [jugador|set <jugador>]`, `warp`, `say <texto>`, `relay` (código y si se entra directo o por el relay), `public [on|off]` (salir o no en la lista pública; se guarda en `server.json`), `kick <jugador> [motivo]`, `time`, `save`, `stop`. Escribe `help` para verlos en la consola.
 
 ## Compilar desde el código
 
@@ -137,6 +155,7 @@ Comandos de consola: `list`, `vessels`, `owner <nave> <jugador|nadie> [privada|c
 |---|---|---|
 | `src/MultiKerbal.Common` | `net472` + `net10.0` | Protocolo, serialización, transporte TCP/UDP y lógica de tiempo. Sin dependencias. |
 | `src/MultiKerbal.Server` | `net10.0` | Servidor dedicado de consola. Autoridad del universo. |
+| `src/MultiKerbal.Relay` | `net10.0` | Relay de consola: da los códigos, la lista pública y pasa el tráfico de quien no es accesible. Ver [docs/RELAY.md](docs/RELAY.md). |
 | `src/MultiKerbal.Client` | `net472` | Plugin de KSP (se copia a `GameData/MultiKerbal/Plugins`). |
 | `tests/MultiKerbal.Tests` | `net10.0` | Tests unitarios y de integración cliente-servidor reales. |
 
@@ -165,6 +184,12 @@ Para sacar una versión, sube `<Version>` en `Directory.Build.props`, haz commit
 
 ```bash
 powershell -ExecutionPolicy Bypass -File tools/Package.ps1
+```
+
+El relay se publica aparte, como un único ejecutable que no necesita .NET instalado (uno para `linux-arm64` y otro para `win-x64`, con su zip cada uno, en `dist/`):
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/PublishRelay.ps1
 ```
 
 ### Dos jugadores en un solo PC

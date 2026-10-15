@@ -4,18 +4,40 @@
 
 El servidor de MultiKerbal escucha en el puerto **6750**, por **TCP y UDP** a la vez (se cambia con `Port` en `server.json`). TCP lleva lo importante: entrar, chat y naves. UDP lleva las posiciones en vuelo, que se mandan muchas veces por segundo. Si el UDP no llega, el juego sigue funcionando y lo manda todo por TCP, pero las naves de los demás se mueven a saltos.
 
-Hay cuatro formas de que tus amigos lleguen a tu servidor. Elige una:
+**La forma más fácil es el código**: no tocas el router ni instalas nada, y funciona aunque tengas CGNAT. Si no te sirve, hay cuatro alternativas con IP. Elige una:
 
-> **Desde el juego:** en el menú principal de KSP, el botón **Hospedar** de la ventana MultiKerbal tiene una pestaña para cada una. Abre el puerto del router solo (si tiene UPnP), avisa si tienes CGNAT, encuentra tu IP de Tailscale, ZeroTier, Radmin VPN o Hamachi, guarda la dirección de tu túnel y te deja copiarlo todo. Esta guía es para lo que el juego no puede hacer solo.
+> **Desde el juego:** en el menú principal de KSP, el botón **Hospedar** de la ventana MultiKerbal te enseña tu código y si se entra directo o por el relay, y deja copiarlo. En su apartado **Avanzado** hay una pestaña para cada alternativa con IP: abre el puerto del router solo (si tiene UPnP), avisa si tienes CGNAT, encuentra tu IP de Tailscale, ZeroTier, Radmin VPN o Hamachi y guarda la dirección de tu túnel. Esta guía es para lo que el juego no puede hacer solo.
 
 | Opción | Quién instala algo | Tocar el router | Retraso | Cuándo usarla |
 |---|---|---|---|---|
-| [Red local virtual](#1-red-local-virtual-tailscale-zerotier-radmin-vpn) | Todos | No | Bajo | Jugar con unos pocos amigos. **La más fácil.** |
+| [Código (relay)](#código-la-forma-más-fácil) | Nadie | No | Bajo, algo más si va por el relay | **La más fácil.** Casi siempre. |
+| [Red local virtual](#1-red-local-virtual-tailscale-zerotier-radmin-vpn) | Todos | No | Bajo | Jugar con unos pocos amigos sin depender del relay. |
 | [Túnel](#2-túnel-playitgg) | Solo tú | No | Algo más alto | Una dirección que cualquiera pueda usar sin instalar nada. |
 | [Abrir el puerto](#3-abrir-el-puerto-en-el-router-port-forwarding) | Nadie | Sí | El más bajo | Tu operador te deja abrir puertos (sin CGNAT). |
 | [Servidor en la nube](#4-servidor-en-la-nube-vps) | Nadie | No | Bajo | Servidor encendido 24 h aunque apagues tu PC. |
 
 En todas, primero arranca el servidor y comprueba que tú mismo puedes entrar con la dirección `127.0.0.1`.
+
+---
+
+## Código: la forma más fácil
+
+Al arrancar, tu servidor se conecta solo a un **relay** (un ordenador central del proyecto, siempre encendido) y recibe un **código** de 6 caracteres, como `K7M-Q2P`. Es tuyo para siempre: sigue siendo el mismo aunque apagues y vuelvas a encender el servidor.
+
+1. Arranca el servidor y comprueba que tú entras con `127.0.0.1`.
+2. Mira tu código: escribe `relay` en la consola del servidor, o abre **Hospedar** en el juego y pulsa *Copiar*.
+3. Pásalo a tus amigos. En la ventana de MultiKerbal lo escriben en el campo *Servidor (IP o código)*, como quieran (`k7m q2p` vale igual que `K7M-Q2P`), y ya está.
+
+No hay que abrir puertos ni instalar nada. Hay dos formas de que el jugador llegue a ti, y el mod elige solo:
+
+- **Directa:** si tu servidor es accesible desde Internet (tienes el puerto abierto), el jugador se conecta directamente a ti. El relay solo le dio tu dirección. El juego lo marca como «Accesible directamente».
+- **Por el relay:** si no lo es (por ejemplo, con CGNAT), el tráfico pasa por el relay. Funciona igual, con algo más de retraso. El juego lo marca como «Por el relay».
+
+Si quieres que tu servidor salga en la **lista pública** del juego, escribe `public on` en la consola del servidor (o marca *Mostrar en la lista pública* en **Hospedar**). Por defecto no sale. `public off` lo quita.
+
+**Sobre la privacidad:** el tráfico de MultiKerbal **no va cifrado**, ni por IP ni por el relay. Si un jugador entra por el relay, quien lo administra podría ver ese tráfico. Con las demás opciones de esta guía (IP directa) el relay no ve nada de la partida. Más detalles, y cómo montar tu propio relay, en [RELAY.md](RELAY.md).
+
+**Si no hay relay o no contesta:** el servidor funciona igual y se puede entrar por IP con cualquiera de las opciones de abajo. En cuanto el relay vuelve, tu servidor se registra solo y conserva su código. Los ajustes `Relay`, `RelayAddress` y `Public` están en el [README](../README.es.md#ajustes-del-servidor). Con `"Relay": false` en `server.json` el servidor no usa el relay.
 
 ---
 
@@ -185,5 +207,7 @@ New-NetFirewallRule -DisplayName "MultiKerbal UDP" -Direction Inbound -Protocol 
 ## Si no conecta
 
 - **Se queda en "Conectando..." y acaba en "Desconectado":** el TCP no llega. Revisa por orden: que el servidor esté abierto, que tú entres con `127.0.0.1`, el Firewall de Windows y luego el router, el túnel o el firewall de la nube.
+- **Con un código, «No se puede contactar con el relay»:** el relay está apagado o tu conexión no llega a él. Mientras, se puede entrar por IP con cualquiera de las opciones de arriba.
+- **Con un código, «No hay ningún servidor encendido con ese código»:** el servidor está apagado, o el código está mal escrito. Escribe `relay` en su consola para ver el bueno.
 - **Entra pero las naves de los demás van a saltos:** el TCP llega pero el UDP no. Revisa que la redirección, el túnel o el firewall incluyan **UDP**, no solo TCP.
 - **En la consola del servidor** sale una línea `Conexión #N desde ...` cada vez que alguien llega. Si no sale nada al intentar entrar, el problema está antes del servidor (router, túnel o firewall).

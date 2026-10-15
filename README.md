@@ -14,6 +14,8 @@ Multiplayer mod for **Kerbal Space Program 1.12.5**: a dedicated server and one 
 - **Owner and access per vessel.** Each vessel belongs to the player who launched it (kept on disk) and is *private*, *shared* or *public*: that decides who else can fly it, recover it or delete it. Owners can hand a vessel over, give it away or leave it without an owner.
 - **Docking between players.** When a free vessel comes within 2.2 km, your game takes over its physics, so ports touch, things collide and vessels merge like in single player.
 - **Shared control.** Whoever flies a vessel can name another player co-pilot: the co-pilot's controls travel over the network and add to the pilot's. You can also ask for control of someone else's vessel.
+- **Join with a code.** Whoever hosts gets a short code (`K7M-Q2P`) and friends type it instead of an IP: no router changes, and it works even behind CGNAT. If the server can be reached directly, players connect directly; if not, traffic goes through a *relay*.
+- **Public list.** Servers that want to can appear in an in-game list (the **List** button), showing players, password, version and connection type.
 - **Mod checking.** The server remembers the mod list of the first player who joins. Before you enter the game you get the list compared with yours, green for what matches and red for what is missing or extra.
 
 ## Installation
@@ -26,6 +28,8 @@ You need two things: **the mod**, which every player installs in KSP, and **the 
 | **MultiKerbal Server** *x.y.z* | `MultiKerbal-Server-x.y.z.zip` | Whoever hosts the game (server side). |
 
 Everyone, the server included, should use the same version number.
+
+> **Important:** **0.2.0** is not compatible with **0.1.x**. A 0.1.x mod cannot join a 0.2.0 server, nor the other way round (the protocol went from version 5 to 6): whoever tries gets the incompatible-version notice. Update the mod and the server together.
 
 ### 1. The mod (every player)
 
@@ -65,13 +69,24 @@ The mod needs no other mods. It only works with KSP 1.12.x.
 5. Tell the other players the address to use:
    - **Same PC:** `127.0.0.1`
    - **Same home network:** your local IP (on Windows, `ipconfig` → *IPv4 Address*, e.g. `192.168.1.20`).
-   - **Over the Internet:** there are four ways: a virtual LAN (Tailscale), a tunnel (playit.gg), forwarding port **6750** (TCP and UDP) on your router, or a cloud server. The **Host** button in the MultiKerbal window helps with any of them from inside the game, and [docs/HOSTING.md](docs/HOSTING.md) walks through each one.
+   - **Over the Internet, with the code:** on start-up the server registers with the relay and shows a code like `K7M-Q2P` (type `relay` in its console to see it, or look at the **Host** button in the game). Give it to your friends: no ports to open and nothing else to install. This is the easiest way.
+   - **Over the Internet, with an IP:** there are four other ways: a virtual LAN (Tailscale), a tunnel (playit.gg), forwarding port **6750** (TCP and UDP) on your router, or a cloud server. [docs/HOSTING.md](docs/HOSTING.md) walks through each one.
+
+If you want your server to appear in the public list, type `public on` in its console (or tick *Show in the public list* in **Host**). By default it does not: only people with the code get in.
+
+> **Not encrypted:** game traffic is not encrypted, neither by IP nor through the relay. When a player joins *through the relay*, whoever runs the relay could see that traffic. If the server can be reached directly, players connect directly and it does not go through the relay. More in [docs/RELAY.md](docs/RELAY.md) (in Spanish), which also explains how to run your own relay.
 
 The universe is saved in the `Universe` folder next to the server, every minute and whenever you stop it with `stop` or Ctrl+C. Back that folder up if you care about it.
 
 ### 3. Connect
 
-In KSP's main menu, fill in the MultiKerbal window: your name, the server address (paste `address:port` in one go and the port fills itself in), the port (`6750` unless you changed it) and the server key if it has one. Press **Connect and play**.
+In KSP's main menu, fill in the MultiKerbal window: your name and the server, which can be:
+
+- **A code** (`K7M-Q2P`): type it however you like, `k7m q2p` and `K7MQ2P` work the same. No port needed.
+- **An IP or a name** (paste `address:port` in one go and the port fills itself in), with the port (`6750` unless you changed it).
+- **One from the list:** the **List** button opens the public servers; pick one and press *Join*. If it has a password, it asks you to type it.
+
+Add the server key if it has one and press **Connect and play**. With a code, if the server can be reached directly you connect directly; if not, you go through the relay without doing anything.
 
 **Your password** is your player account's, separate from the server key. The first time you join with a name, that name is registered with the password you type (at least 4 characters); after that only someone who knows it gets in. If you forget it, the admin can delete your account (`account delete <name>`) and you pick a new one next time. *Remember it* stores it on this computer.
 
@@ -121,9 +136,12 @@ Stages dropped from someone else's vessel stay the owner's (you can still lose t
 | `Language` | `es` | Language of the chat messages and refusal reasons the server sends: `es` or `en`. |
 | `GameMode` | `sandbox` | `sandbox` (no progress), `science` (shared science and technologies) or `career` (plus funds and reputation). |
 | `StartingFunds` | `25000` | Funds a new career starts with. |
+| `Relay` | `true` | Register with the relay: gives a code to join without opening ports and allows appearing in the public list. With `false` the server can only be joined by IP. |
+| `RelayAddress` | `multikerbal.duckdns.org:6760` | Relay address (`name` or `name:port`). Change it only if you use another relay; see [docs/RELAY.md](docs/RELAY.md) (in Spanish). |
+| `Public` | `false` | Appear in the relay's public server list. With `false`, only people with the code or the IP get in. |
 | `DataDirectory` | `Universe` | Where the universe is stored. |
 
-Console commands: `list`, `vessels`, `owner <vessel> <player|nobody> [private|shared|public]`, `account` (accounts) and `account delete <player>` (forgotten password), `progress`, `mods [player|set <player>]`, `warp`, `say <text>`, `kick <player> [reason]`, `time`, `save`, `stop`. Type `help` to see them in the console.
+Console commands: `list`, `vessels`, `owner <vessel> <player|nobody> [private|shared|public]`, `account` (accounts) and `account delete <player>` (forgotten password), `progress`, `mods [player|set <player>]`, `warp`, `say <text>`, `relay` (code, and whether players join directly or through the relay), `public [on|off]` (appear in the public list or not; saved to `server.json`), `kick <player> [reason]`, `time`, `save`, `stop`. Type `help` to see them in the console.
 
 ## Building from source
 
@@ -131,6 +149,7 @@ Console commands: `list`, `vessels`, `owner <vessel> <player|nobody> [private|sh
 |---|---|---|
 | `src/MultiKerbal.Common` | `net472` + `net10.0` | Protocol, serialization, TCP/UDP transport and time logic. No dependencies. |
 | `src/MultiKerbal.Server` | `net10.0` | Dedicated console server. Authority over the universe. |
+| `src/MultiKerbal.Relay` | `net10.0` | Console relay: hands out the codes, serves the public list and carries the traffic of servers that can't be reached directly. See [docs/RELAY.md](docs/RELAY.md) (in Spanish). |
 | `src/MultiKerbal.Client` | `net472` | KSP plugin (copied to `GameData/MultiKerbal/Plugins`). |
 | `tests/MultiKerbal.Tests` | `net10.0` | Unit tests plus real client-server integration tests. |
 
@@ -159,6 +178,12 @@ To package a release, bump `<Version>` in `Directory.Build.props`, commit, and r
 
 ```bash
 powershell -ExecutionPolicy Bypass -File tools/Package.ps1
+```
+
+The relay is published separately, as a single executable that needs no .NET installed (one for `linux-arm64` and one for `win-x64`, each with its own zip, in `dist/`):
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/PublishRelay.ps1
 ```
 
 ### Two players on one PC
