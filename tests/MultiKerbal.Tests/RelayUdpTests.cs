@@ -156,6 +156,42 @@ public sealed class RelayUdpTests
     }
 
     [Fact]
+    public void PlayerReusingTheUdpAddressOfAServerThatLeft_StillGetsItsUdpThrough()
+    {
+        // Con CGNAT, la IP:puerto pública de un servidor que ya se fue puede tocarle después a un jugador.
+        using var relay = new TestRelay(LongLived);
+        var relayUdp = new IPEndPoint(IPAddress.Loopback, relay.Port);
+        using UdpClient shared = NewUdp();
+
+        // El servidor A saluda desde esa dirección y se va.
+        RawRelayClient controlA = relay.Connect();
+        var registeredA = controlA.Request<RelayRegisteredMessage>(RawRelayClient.Register(RawRelayClient.Key(1)));
+        shared.Send(FrameCodec.EncodeUdp(new RelayUdpHelloMessage { UdpSecret = registeredA.UdpSecret }, 0), relayUdp);
+        Thread.Sleep(100); // Que el relay apunte el hola antes de que A se vaya.
+        controlA.Dispose();
+        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 3));
+
+        // El servidor B tiene un jugador por el relay que usa esa misma dirección para su UDP.
+        RawRelayClient controlB = relay.Connect();
+        var registeredB = controlB.Request<RelayRegisteredMessage>(RawRelayClient.Register(RawRelayClient.Key(2)));
+        using UdpClient serverUdp = NewUdp();
+        serverUdp.Send(FrameCodec.EncodeUdp(new RelayUdpHelloMessage { UdpSecret = registeredB.UdpSecret }, 0), relayUdp);
+        RawRelayClient player = relay.Connect();
+        player.Send(new RelayJoinMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = registeredB.Code });
+        var incoming = controlB.ReceiveControl<RelayIncomingMessage>();
+        RawRelayClient attach = relay.Connect();
+        attach.Send(new RelayAttachMessage { RelayVersion = ProtocolInfo.RelayVersion, SessionId = incoming.SessionId, Secret = incoming.Secret });
+        Assert.True(Assert.IsType<RelayJoinResultMessage>(player.Receive()).Ok);
+        const ulong token = 0x5566778899AABBCC;
+        controlB.Send(new RelayUdpTokenMessage { SessionId = incoming.SessionId, Token = token });
+
+        byte[] up = FrameCodec.EncodeUdp(new UdpBindMessage(), token);
+        Assert.True(SendUntilReceived(shared, up, relayUdp, serverUdp, up), "El UDP del jugador no llegó al servidor");
+        byte[] down = FrameCodec.EncodeUdp(new UdpBindAckMessage(), token);
+        Assert.True(SendUntilReceived(serverUdp, down, relayUdp, shared, down), "La respuesta del servidor no llegó al jugador");
+    }
+
+    [Fact]
     public void ServerControlDropsAndComesBack_WhileAPlayerThroughTheRelayKeepsItsUdp()
     {
         // Las sesiones de los jugadores siguen vivas aunque se caiga el control del servidor. Los datagramas que el

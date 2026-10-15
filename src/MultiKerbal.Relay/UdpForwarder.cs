@@ -12,16 +12,17 @@ namespace MultiKerbal.Relay;
 /// de cada datagrama, la ficha, y lo demás lo pasa tal cual:
 /// <list type="bullet">
 /// <item>Ficha 0: el hola UDP de un servidor, que apunta su dirección UDP.</item>
-/// <item>Desde la dirección UDP de un servidor: va a la última dirección conocida del jugador de esa ficha.</item>
-/// <item>Si no, con la ficha de una sesión viva: se apunta el remitente como dirección del jugador (siempre la
-/// última, por si su router le cambia el puerto) y va a la dirección UDP del servidor.</item>
+/// <item>Con la ficha de una sesión viva, desde la dirección UDP del servidor de esa sesión: va a la última dirección
+/// conocida de su jugador.</item>
+/// <item>Con la ficha de una sesión viva, desde cualquier otra dirección: se apunta el remitente como dirección del
+/// jugador (siempre la última, por si su router le cambia el puerto) y va a la dirección UDP del servidor.</item>
 /// </list>
 /// Todo lo demás se descarta en silencio. Los bytes cuentan para el tope de tráfico de la sesión.
 /// <para>
 /// La dirección UDP de cada servidor se guarda por su código y no se olvida cuando se cae su control: las sesiones
 /// de sus jugadores siguen vivas (cada una tiene su propia TCP) y su UDP debe seguir pasando mientras el servidor
-/// vuelve a registrarse. Solo la sustituye un hola nuevo del mismo código. Así la dirección de un servidor nunca
-/// puede tomarse por la de un jugador.
+/// vuelve a registrarse. Solo la sustituye un hola nuevo del mismo código. Así la dirección del servidor de una
+/// sesión nunca puede tomarse por la de su jugador.
 /// </para>
 /// </summary>
 internal sealed class UdpForwarder
@@ -108,21 +109,19 @@ internal sealed class UdpForwarder
             return;
         }
 
-        if (_codeByEndPoint.TryGetValue(sender, out string? fromServer))
-        {
-            // Del servidor al jugador: solo con fichas de sus propias sesiones y si el jugador ya ha dado señales.
-            // Nunca sigue más abajo: la dirección de un servidor no puede apuntarse como la de un jugador.
-            if (_routes.TryGetValue(token, out UdpRoute? down) && down.ServerCode == fromServer
-                && down.Player is { } player && down.Down.Reserve(count) == TimeSpan.Zero)
-            {
-                Send(buffer, count, player);
-            }
-
-            return;
-        }
-
         if (!_routes.TryGetValue(token, out UdpRoute? route))
             return;
+
+        // Del servidor de esa sesión al jugador (si el jugador ya ha dado señales). Nunca sigue más abajo: la
+        // dirección del propio servidor de la sesión no puede apuntarse como la de su jugador. Que el remitente sea
+        // la dirección de otro servidor no basta (puede ser una vieja de uno que ya se fue, y con CGNAT tocarle
+        // ahora a un jugador): entonces es un datagrama de jugador como cualquier otro.
+        if (_codeByEndPoint.TryGetValue(sender, out string? fromServer) && fromServer == route.ServerCode)
+        {
+            if (route.Player is { } player && route.Down.Reserve(count) == TimeSpan.Zero)
+                Send(buffer, count, player);
+            return;
+        }
 
         route.Player = sender;
         if (_endPointByCode.TryGetValue(route.ServerCode, out EndPoint? server) && route.Up.Reserve(count) == TimeSpan.Zero)
