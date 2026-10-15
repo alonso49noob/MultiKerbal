@@ -75,15 +75,21 @@ namespace MultiKerbal.Client.UI
 
         private void Adopt()
         {
+            // Primero si la carga sigue en marcha y luego su resultado: el hilo deja el resultado antes de bajar
+            // _loadRunning, así que nunca se ve "terminada" sin haber visto antes lo que trajo.
+            bool running = _loadRunning;
             LoadResult result = _incoming;
             if (result != null)
             {
                 _incoming = null;
-                _servers = result.Servers;
+
+                // Si falla, se sigue viendo la lista anterior, con el error encima.
+                if (result.Servers != null)
+                    _servers = result.Servers;
                 _error = result.Error;
             }
 
-            _loading = _loadRunning;
+            _loading = running;
         }
 
         private void Refresh()

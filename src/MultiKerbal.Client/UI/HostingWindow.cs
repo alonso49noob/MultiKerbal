@@ -20,6 +20,9 @@ namespace MultiKerbal.Client.UI
         private const float PollSeconds = 3f;
         private const int QueryTimeoutMs = 1000;
         private const int ControlTimeoutMs = 2000;
+
+        /// <summary>Lo que se queda a la vista el aviso de que el servidor no aceptó una orden (o hasta la siguiente orden).</summary>
+        private const float ControlFailedSeconds = 10f;
         private const string LocalHost = "127.0.0.1";
 
         private const string PlayitUrl = "https://playit.gg/download";
@@ -55,6 +58,10 @@ namespace MultiKerbal.Client.UI
         private bool _statusBusy;
         private int _statusPort;
 
+        // Hasta cuándo se ve el aviso de orden no aceptada, y si se ve en este cuadro (se decide en el Layout).
+        private float _controlFailedUntil;
+        private bool _showControlFailed;
+
         // Lo escriben los hilos de fondo y lo lee la ventana.
         private volatile bool _routerBusy;
         private volatile PortForwardResult _routerResult;
@@ -80,6 +87,7 @@ namespace MultiKerbal.Client.UI
             _status = null;
             _incoming = null;
             _nextPoll = 0f;
+            _controlFailedUntil = 0f;
             ScanVirtualNetworks();
         }
 
@@ -173,10 +181,15 @@ namespace MultiKerbal.Client.UI
             {
                 _incoming = null;
                 _status = incoming;
+
+                // El aviso no desaparece con la siguiente consulta periódica (3 s): se queda un rato.
+                if (incoming.ControlFailed)
+                    _controlFailedUntil = Time.realtimeSinceStartup + ControlFailedSeconds;
             }
 
             _statusBusy = _queryRunning;
             _statusPort = Port;
+            _showControlFailed = Time.realtimeSinceStartup < _controlFailedUntil;
         }
 
         private void PollIfDue()
@@ -197,6 +210,10 @@ namespace MultiKerbal.Client.UI
 
             _queryRunning = true;
             _nextPoll = Time.realtimeSinceStartup + PollSeconds;
+
+            // Una orden nueva borra el aviso de la anterior (si esta tampoco se acepta, vuelve a salir).
+            if (action.HasValue)
+                _controlFailedUntil = 0f;
             BackgroundWork.Run("estado del servidor", () =>
             {
                 bool controlFailed = false;
@@ -275,7 +292,7 @@ namespace MultiKerbal.Client.UI
 
             GUI.enabled = true;
 
-            if (snapshot.ControlFailed)
+            if (_showControlFailed)
             {
                 UiStyles.ColoredLabel(Loc.T(
                     "El servidor no aceptó el cambio. Solo se puede pedir desde el PC donde está abierto.",
@@ -291,7 +308,12 @@ namespace MultiKerbal.Client.UI
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(Loc.T("Código para tus amigos:", "Code for your friends:"), UiStyles.Label, GUILayout.Width(170f));
                 GUILayout.Label(shown, UiStyles.Bold);
+
+                // Copiar no depende de la consulta en marcha: si no, el clic se perdería durante cada consulta periódica.
+                bool enabled = GUI.enabled;
+                GUI.enabled = true;
                 CopyButton.Draw(shown);
+                GUI.enabled = enabled;
                 GUILayout.EndHorizontal();
             }
 
