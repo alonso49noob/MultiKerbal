@@ -22,7 +22,9 @@ En todas, primero arranca el servidor y comprueba que tú mismo puedes entrar co
 
 ## Código: la forma más fácil
 
-Al arrancar, tu servidor se conecta solo a un **relay** (un ordenador central del proyecto, siempre encendido) y recibe un **código** de 6 caracteres, como `K7M-Q2P`. Es tuyo para siempre: sigue siendo el mismo aunque apagues y vuelvas a encender el servidor.
+Al arrancar, tu servidor se conecta solo a un **relay** (un ordenador central del proyecto, siempre encendido) y recibe un **código** de 6 caracteres, como `K7M-Q2P`. Es tuyo mientras conserves `relay.key` (en la carpeta `Universe` del servidor): sigue siendo el mismo aunque apagues y vuelvas a encender el servidor.
+
+> **No compartas ni subas nunca `relay.key`** (a GitHub, a un foro, en una copia del universo que pases a alguien...): quien tenga ese archivo puede registrarse con tu código y quedarse con él. Si mueves el servidor a otro PC, llévate la carpeta `Universe` entera y conservarás el código.
 
 1. Arranca el servidor y comprueba que tú entras con `127.0.0.1`.
 2. Mira tu código: escribe `relay` en la consola del servidor, o abre **Hospedar** en el juego y pulsa *Copiar*.
@@ -75,6 +77,8 @@ Deja el agente de playit abierto mientras jugáis. El plan gratis añade algo de
 **ngrok no sirve** en su plan gratis: solo pasa TCP. El juego entraría, pero sin UDP.
 
 En el registro del servidor, todos los jugadores aparecen conectando desde la misma IP, la del agente de playit. Es normal, el servidor no usa la IP para distinguir a los jugadores.
+
+> **Ojo con Hospedar:** como el agente corre en tu PC, el servidor cree que todo lo que llega por el túnel viene de tu propio equipo. Por eso cualquiera que entre por la dirección de playit podría hacer lo mismo que tú desde **Hospedar**: cambiar *Mostrar en la lista pública* (y sacar a la lista un servidor que querías privado) o pedir otra comprobación de acceso. Si eso te importa, usa el código o abre el puerto en vez del túnel. Lo mismo pasa con cualquier otro agente de túnel que corra en el mismo PC que el servidor.
 
 ---
 
@@ -209,5 +213,6 @@ New-NetFirewallRule -DisplayName "MultiKerbal UDP" -Direction Inbound -Protocol 
 - **Se queda en "Conectando..." y acaba en "Desconectado":** el TCP no llega. Revisa por orden: que el servidor esté abierto, que tú entres con `127.0.0.1`, el Firewall de Windows y luego el router, el túnel o el firewall de la nube.
 - **Con un código, «No se puede contactar con el relay»:** el relay está apagado o tu conexión no llega a él. Mientras, se puede entrar por IP con cualquiera de las opciones de arriba.
 - **Con un código, «No hay ningún servidor encendido con ese código»:** el servidor está apagado, o el código está mal escrito. Escribe `relay` en su consola para ver el bueno.
+- **Escribes un nombre de equipo de 6 letras y números (como `pc2024`) y dice que no hay servidor con ese código:** se ha tomado por un código. Escríbelo con el puerto: `pc2024:6750`.
 - **Entra pero las naves de los demás van a saltos:** el TCP llega pero el UDP no. Revisa que la redirección, el túnel o el firewall incluyan **UDP**, no solo TCP.
 - **En la consola del servidor** sale una línea `Conexión #N desde ...` cada vez que alguien llega. Si no sale nada al intentar entrar, el problema está antes del servidor (router, túnel o firewall).

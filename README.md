@@ -15,7 +15,7 @@ Multiplayer mod for **Kerbal Space Program 1.12.5**: a dedicated server and one 
 - **Docking between players.** When a free vessel comes within 2.2 km, your game takes over its physics, so ports touch, things collide and vessels merge like in single player.
 - **Shared control.** Whoever flies a vessel can name another player co-pilot: the co-pilot's controls travel over the network and add to the pilot's. You can also ask for control of someone else's vessel.
 - **Join with a code.** Whoever hosts gets a short code (`K7M-Q2P`) and friends type it instead of an IP: no router changes, and it works even behind CGNAT. If the server can be reached directly, players connect directly; if not, traffic goes through a *relay*.
-- **Public list.** Servers that want to can appear in an in-game list (the **List** button), showing players, password, version and connection type.
+- **Public list.** Servers that want to can appear in an in-game list (the **List** button), showing players, whether they need a key, version and connection type.
 - **Mod checking.** The server remembers the mod list of the first player who joins. Before you enter the game you get the list compared with yours, green for what matches and red for what is missing or extra.
 
 ## Installation
@@ -65,14 +65,16 @@ The mod needs no other mods. It only works with KSP 1.12.x.
 3. Start it from that folder:
    - **Windows:** double-click `MultiKerbal.Server.exe`. If Windows Firewall asks, allow it.
    - **Linux / macOS:** run `dotnet MultiKerbal.Server.dll`.
-4. The first run creates `server.json` next to the server. Close the server (type `stop`), set a name and a password in that file if you want them, and start it again. See [Server settings](#server-settings).
+4. The first run creates `server.json` next to the server. Close the server (type `stop`), set a name and a server key in that file if you want them, and start it again. See [Server settings](#server-settings).
 5. Tell the other players the address to use:
    - **Same PC:** `127.0.0.1`
    - **Same home network:** your local IP (on Windows, `ipconfig` → *IPv4 Address*, e.g. `192.168.1.20`).
-   - **Over the Internet, with the code:** on start-up the server registers with the relay and shows a code like `K7M-Q2P` (type `relay` in its console to see it, or look at the **Host** button in the game). Give it to your friends: no ports to open and nothing else to install. This is the easiest way.
+   - **Over the Internet, with the code:** on start-up the server registers with the relay and shows a code like `K7M-Q2P` (type `relay` in its console to see it, or look at the **Host** button in the game). Give it to your friends: no ports to open and nothing else to install. This is the easiest way. The code is yours as long as you keep `relay.key` (in the `Universe` folder). **Never share or upload `relay.key`** (to GitHub, a forum, a copy of the universe you give someone...): whoever has it can take over your code.
    - **Over the Internet, with an IP:** there are four other ways: a virtual LAN (Tailscale), a tunnel (playit.gg), forwarding port **6750** (TCP and UDP) on your router, or a cloud server. [docs/HOSTING.md](docs/HOSTING.md) walks through each one.
 
 If you want your server to appear in the public list, type `public on` in its console (or tick *Show in the public list* in **Host**). By default it does not: only people with the code get in.
+
+> **If you use a tunnel on your PC** (playit.gg or a similar agent): connections that come through the tunnel look as if they were made from your own PC, so anyone who gets in through it could toggle *Show in the public list* or ask for another check, just like you can from **Host**. If that matters to you, use the code or open the port instead of the tunnel.
 
 > **Not encrypted:** game traffic is not encrypted, neither by IP nor through the relay. When a player joins *through the relay*, whoever runs the relay could see that traffic. If the server can be reached directly, players connect directly and it does not go through the relay. More in [docs/RELAY.md](docs/RELAY.md) (in Spanish), which also explains how to run your own relay.
 
@@ -82,9 +84,9 @@ The universe is saved in the `Universe` folder next to the server, every minute 
 
 In KSP's main menu, fill in the MultiKerbal window: your name and the server, which can be:
 
-- **A code** (`K7M-Q2P`): type it however you like, `k7m q2p` and `K7MQ2P` work the same. No port needed.
+- **A code** (`K7M-Q2P`): type it however you like, `k7m q2p` and `K7MQ2P` work the same. No port needed. A 6-character computer name made of letters and digits, like `pc2024`, is also read as a code: type it with the port, `pc2024:6750`.
 - **An IP or a name** (paste `address:port` in one go and the port fills itself in), with the port (`6750` unless you changed it).
-- **One from the list:** the **List** button opens the public servers; pick one and press *Join*. If it has a password, it asks you to type it.
+- **One from the list:** the **List** button opens the public servers; pick one and press *Join*. If it has a key, it asks you to type it.
 
 Add the server key if it has one and press **Connect and play**. With a code, if the server can be reached directly you connect directly; if not, you go through the relay without doing anything.
 

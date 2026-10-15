@@ -12,9 +12,11 @@ El relay es un programa pequeño que se queda encendido en una máquina con IP p
 
 Además comprueba si cada servidor es accesible directamente desde Internet. Si lo es, los jugadores que entran con código se conectan **directos** y el relay no pasa su tráfico; si no, entran por el relay.
 
-El relay **no guarda el contenido** de lo que pasa por él. Su registro (`logs/`) lleva altas y bajas de servidores, sesiones, rechazos y cifras de tráfico.
+El relay **no guarda el contenido** de lo que pasa por él. Su registro (`logs/`, un archivo por día) lleva altas y bajas de servidores, sesiones y rechazos, y **contiene las direcciones IP** de los servidores y de los jugadores que entran por el relay. Si montas un relay para otros, es un dato personal: díselo a quienes lo usen y borra los registros viejos que no necesites.
 
 > **El tráfico va sin cifrar.** Igual que cuando se entra por IP, nada de lo que viaja entre KSP y el servidor está cifrado. Quien administra el relay *podría ver* todo lo que pasa por él mientras un jugador entra por el relay. Por eso el relay del proyecto no debe usarse para nada que quieras mantener en secreto, y si montas uno para otros, debes decírselo a quienes lo usen. Si el servidor es accesible directamente, ese tráfico no pasa por el relay.
+>
+> Lo mismo vale para el registro: la clave de 32 bytes de cada servidor (la de `relay.key`) viaja sin cifrar cada vez que se registra, así que alguien que pueda ver el tráfico entre el servidor y el relay podría copiarla y quedarse con su código.
 
 ## Requisitos
 
@@ -66,13 +68,21 @@ El relay crea las carpetas `relay-data/` (con `codes.json`) y `logs/`. Son relat
 
 ## Servicio systemd
 
-Para que arranque con la máquina y se reinicie si se cae. Crea el archivo:
+Para que arranque con la máquina y se reinicie si se cae. El relay está expuesto a Internet, así que es mejor que corra con **un usuario propio sin privilegios** (sin `sudo` ni contraseña, que no pueda tocar nada fuera de su carpeta). Créalo y pásale la carpeta del relay:
+
+```bash
+sudo useradd --system --create-home --home-dir /opt/multikerbal-relay --shell /usr/sbin/nologin multikerbal
+sudo cp -r ~/MultiKerbal-Relay/. /opt/multikerbal-relay/
+sudo chown -R multikerbal:multikerbal /opt/multikerbal-relay
+```
+
+Después crea el archivo del servicio:
 
 ```bash
 sudo nano /etc/systemd/system/multikerbal-relay.service
 ```
 
-con esto (cambia `ubuntu` y la ruta si tu usuario es otro):
+con esto:
 
 ```ini
 [Unit]
@@ -81,18 +91,20 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/MultiKerbal-Relay
-ExecStart=/home/ubuntu/MultiKerbal-Relay/MultiKerbal.Relay
+User=multikerbal
+Group=multikerbal
+WorkingDirectory=/opt/multikerbal-relay
+ExecStart=/opt/multikerbal-relay/MultiKerbal.Relay
 KillSignal=SIGINT
 TimeoutStopSec=30
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`KillSignal=SIGINT` hace que al pararlo se comporte como Ctrl+C: el relay se cierra ordenadamente. Actívalo:
+`KillSignal=SIGINT` hace que al pararlo se comporte como Ctrl+C: el relay se cierra ordenadamente. `RestartSec=5` espera 5 segundos antes de volver a arrancarlo si se cae. Actívalo:
 
 ```bash
 sudo systemctl daemon-reload
@@ -106,7 +118,16 @@ Comandos útiles:
 - `sudo systemctl restart multikerbal-relay`: reiniciarlo (los servidores se vuelven a registrar solos y conservan su código; los jugadores que iban por el relay se desconectan y vuelven a entrar).
 - `sudo systemctl stop multikerbal-relay`: pararlo.
 
-Como servicio no hay consola, así que no puedes escribir `list` ni `ban`. Si los necesitas, arráncalo dentro de `tmux` en vez de como servicio (`tmux`, luego `./MultiKerbal.Relay`, y Ctrl+B y luego D para dejarlo en segundo plano; `tmux attach` para volver).
+Como servicio no hay consola, así que no puedes escribir `list` ni `ban`. Si los necesitas, arráncalo dentro de `tmux` en vez de como servicio. **Primero para el servicio**: los dos a la vez no pueden usar los mismos puertos.
+
+```bash
+sudo systemctl stop multikerbal-relay
+sudo systemctl disable multikerbal-relay   # para que no vuelva solo con el siguiente reinicio
+cd /opt/multikerbal-relay
+sudo -u multikerbal env SHELL=/bin/bash tmux new -s relay ./MultiKerbal.Relay
+```
+
+Así corre con el mismo usuario y desde la misma carpeta (con el mismo `relay-data/`). Ctrl+B y luego D lo deja en segundo plano; `sudo -u multikerbal tmux attach -t relay` para volver. Cuando acabes, `stop` en su consola y `sudo systemctl enable --now multikerbal-relay` para volver al servicio.
 
 ## Puertos
 
@@ -162,7 +183,19 @@ MultiKerbal.Relay [--port 6760] [--probe-port 6761] [--data relay-data]
 
 ## Límites
 
-Contra abusos, el relay admite como mucho: **5 servidores por IP**, **64 sesiones por servidor**, **1 MB/s por sesión** en cada sentido, mensajes de **64 KB** y una lista pública de **500** servidores (nombres de hasta 40 caracteres). Una conexión que no manda un primer mensaje válido en 10 segundos se cierra.
+Contra abusos, el relay admite como mucho:
+
+- **5 servidores vivos por IP**, y **3 claves nuevas por IP cada 24 horas** (cada clave nueva gasta un código para siempre; volver a registrar una clave que ya tiene código no cuenta). Se cuentan en memoria y se olvidan al reiniciar el relay.
+- **20 conexiones abiertas a la vez por IP** y **5 conexiones nuevas por segundo por IP** (con ráfagas de hasta 20). El control y los enganches de un servidor registrado no cuentan para las 20.
+- **64 sesiones por servidor**, y **4 por cada IP de jugador** con un mismo servidor, para que una sola IP no ocupe todas las plazas.
+- **1 MB/s por sesión** en cada sentido.
+- El **primer mensaje** de una conexión, **4 KB**; los demás mensajes del control de un servidor, **64 KB**. Una conexión que no manda un primer mensaje válido en 10 segundos se cierra.
+- Una **lista pública** de **500** servidores. El nombre se corta a 40 caracteres y la versión a 32, sin caracteres de control.
+- Una **comprobación de acceso pedida** por el servidor (*Volver a comprobar*) cada 30 segundos; las periódicas, cada 10 minutos.
+
+Si un servidor llega a uno de estos límites, el relay lo rechaza con el motivo y el servidor lo vuelve a intentar solo pasados 5 minutos. Solo dos rechazos son definitivos (el servidor deja de intentarlo hasta que lo reinicies): una versión distinta del protocolo y un baneo.
+
+Los avisos repetidos que cualquiera puede provocar (conexiones rechazadas, mensajes raros) se escriben en el registro como mucho una vez por minuto por IP y tipo, con la cuenta de los que se callaron.
 
 ## Apuntar el servidor y el mod a otro relay
 

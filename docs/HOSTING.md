@@ -22,7 +22,9 @@ Whichever you choose, first start the server and check that you can join it your
 
 ## Code: the easiest way
 
-On start-up your server connects by itself to a **relay** (a central computer run by the project, always on) and gets a 6-character **code**, like `K7M-Q2P`. It is yours for good: it stays the same when you stop and start the server again.
+On start-up your server connects by itself to a **relay** (a central computer run by the project, always on) and gets a 6-character **code**, like `K7M-Q2P`. It is yours as long as you keep `relay.key` (in the server's `Universe` folder): it stays the same when you stop and start the server again.
+
+> **Never share or upload `relay.key`** (to GitHub, a forum, a copy of the universe you give someone...): whoever has that file can register with your code and take it over. If you move the server to another PC, take the whole `Universe` folder with you and you keep the code.
 
 1. Start the server and check that you can join at `127.0.0.1`.
 2. See your code: type `relay` in the server console, or open **Host** in the game and press *Copy*.
@@ -75,6 +77,8 @@ Keep the playit agent running while you play. The free plan adds some latency, b
 **ngrok won't do** on its free plan: it only carries TCP. The game would connect, but without UDP.
 
 In the server log, every player shows up connecting from the same IP, the playit agent's. That's fine: the server doesn't use the IP to tell players apart.
+
+> **Careful with Host:** since the agent runs on your PC, the server thinks everything that comes through the tunnel comes from your own computer. So anyone who joins through the playit address could do what you can do from **Host**: toggle *Show in the public list* (putting a server you wanted private in the list) or ask for another reachability check. If that matters to you, use the code or open the port instead of the tunnel. The same goes for any other tunnel agent running on the same PC as the server.
 
 ---
 
@@ -209,5 +213,6 @@ New-NetFirewallRule -DisplayName "MultiKerbal UDP" -Direction Inbound -Protocol 
 - **It sits on "Connecting..." and ends up "Disconnected":** TCP isn't getting through. Check in order: the server is running, you can join at `127.0.0.1`, Windows Firewall, then the router, the tunnel or the cloud firewall.
 - **With a code, "Cannot reach the relay":** the relay is down or your connection can't reach it. In the meantime you can join by IP with any of the options above.
 - **With a code, "There is no server running with that code":** the server is off, or the code is mistyped. Type `relay` in its console to see the right one.
+- **You type a 6-character computer name (like `pc2024`) and it says there is no server with that code:** it was read as a code. Type it with the port: `pc2024:6750`.
 - **You get in but other vessels move in jumps:** TCP gets through but UDP doesn't. Check that the forward, the tunnel or the firewall includes **UDP**, not just TCP.
 - **The server console** prints a `Conexión #N desde ...` line (Spanish for "Connection #N from ...") every time someone arrives. If nothing shows up when someone tries to join, the problem is before the server (router, tunnel or firewall).
