@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -10,7 +11,8 @@ namespace MultiKerbal.Relay;
 
 /// <summary>
 /// Comprobación de acceso directo (diseño, 4.2): ¿se puede llegar al puerto de juego del servidor desde fuera, por
-/// TCP y por UDP? Se hace al registrarse, cada <see cref="RelayOptions.RecheckInterval"/> y cuando el servidor la pide.
+/// TCP y por UDP? Se hace al registrarse, cada <see cref="RelayOptions.RecheckInterval"/> y cuando el servidor la pide
+/// (como mucho una cada <see cref="RelayOptions.MinRecheckInterval"/>).
 /// El UDP sale de un socket propio, distinto del de reenvío, para que el agujero que abre el hola del servidor en su
 /// router no dé un falso positivo. Corre en sus propias tareas, sin cerrojos durante la red.
 /// </summary>
@@ -62,7 +64,15 @@ internal sealed class ReachabilityProber
                     RelayLog.Error($"[{ServerCode.Format(session.Code)}] Error inesperado en la comprobación de acceso: {ex}");
                 }
 
-                await session.WaitForRecheckAsync(_options.RecheckInterval, watch.Token);
+                // Las que pide el servidor esperan a que pase el mínimo desde que terminó la anterior: pedirlas sin
+                // parar no hace que el relay sondee sin parar. Las periódicas no cambian.
+                var sinceLast = Stopwatch.StartNew();
+                if (await session.WaitForRecheckAsync(_options.RecheckInterval, watch.Token))
+                {
+                    TimeSpan wait = _options.MinRecheckInterval - sinceLast.Elapsed;
+                    if (wait > TimeSpan.Zero)
+                        await Task.Delay(wait, watch.Token);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -115,7 +125,7 @@ internal sealed class ReachabilityProber
             tcp.NoDelay = true;
             NetworkStream stream = tcp.GetStream();
             await RelayWire.WriteAsync(stream, new RelayProbeMessage { Nonce = nonce }, deadline.Token);
-            return await RelayWire.ReadAsync(stream, deadline.Token) is RelayProbeReplyMessage reply && reply.Nonce == nonce;
+            return await RelayWire.ReadAsync(stream, _options.MaxFirstMessageBytes, deadline.Token) is RelayProbeReplyMessage reply && reply.Nonce == nonce;
         }
         catch (Exception ex) when (RelayWire.IsConnectionError(ex))
         {

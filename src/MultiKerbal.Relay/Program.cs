@@ -34,7 +34,7 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-RelayLog.OpenFile(Path.Combine("logs", $"relay-{DateTime.Now:yyyyMMdd}.log"));
+RelayLog.OpenDaily("logs");
 
 var host = new RelayHost(options);
 try

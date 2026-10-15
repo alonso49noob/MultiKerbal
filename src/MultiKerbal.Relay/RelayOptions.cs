@@ -32,9 +32,40 @@ internal sealed class RelayOptions
     /// <summary>Plazo de cada comprobación de acceso directo.</summary>
     public TimeSpan ProbeTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Tiempo mínimo entre dos comprobaciones cuando las pide el servidor (con <c>RelayRecheck</c>).</summary>
+    public TimeSpan MinRecheckInterval { get; set; } = TimeSpan.FromSeconds(30);
+
     public int MaxServersPerIp { get; set; } = 5;
 
+    /// <summary>Claves nuevas (cada una gasta un código para siempre) que se aceptan de una misma IP en <see cref="NewCodeWindow"/>.</summary>
+    public int MaxNewCodesPerIp { get; set; } = 3;
+
+    public TimeSpan NewCodeWindow { get; set; } = TimeSpan.FromHours(24);
+
     public int MaxSessionsPerServer { get; set; } = 64;
+
+    /// <summary>Sesiones por el relay de una misma IP de jugador hacia un mismo servidor (esperando o pasando bytes).</summary>
+    public int MaxSessionsPerPlayerIp { get; set; } = 4;
+
+    /// <summary>
+    /// Conexiones abiertas a la vez desde una IP, sin contar los controles y enganches de los servidores (que dejan de
+    /// contar en cuanto dicen qué son).
+    /// </summary>
+    public int MaxConnectionsPerIp { get; set; } = 20;
+
+    /// <summary>Conexiones nuevas por segundo que se aceptan de una IP, con una ráfaga de <see cref="NewConnectionBurstPerIp"/>.</summary>
+    public double NewConnectionsPerSecondPerIp { get; set; } = 5;
+
+    public int NewConnectionBurstPerIp { get; set; } = 20;
+
+    /// <summary>Tamaño máximo del primer mensaje de una conexión (todos son pequeños). El control registrado admite hasta 64 KB.</summary>
+    public int MaxFirstMessageBytes { get; set; } = 4 * 1024;
+
+    /// <summary>Cada aviso repetido de una misma IP (conexiones rechazadas, mensajes raros...) se escribe como mucho una vez en este tiempo.</summary>
+    public TimeSpan WarningInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>Pausa tras un error al aceptar conexiones, para no dar vueltas sin parar si el error se repite.</summary>
+    public TimeSpan AcceptErrorDelay { get; set; } = TimeSpan.FromMilliseconds(250);
 
     /// <summary>Tope de tráfico de cada sesión, en cada sentido.</summary>
     public long BytesPerSecond { get; set; } = 1_000_000;

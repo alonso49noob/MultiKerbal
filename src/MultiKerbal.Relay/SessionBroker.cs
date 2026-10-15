@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -22,6 +21,7 @@ internal sealed class SessionBroker
     private readonly RelayOptions _options;
     private readonly Func<string, ServerSession?> _findServer;
     private readonly UdpForwarder _udp;
+    private readonly WarningThrottle _warnings;
     private readonly object _lock = new();
 
     /// <summary>Sesiones vivas (esperando el enganche o pasando bytes) por su id. Se toca con <see cref="_lock"/>.</summary>
@@ -29,11 +29,13 @@ internal sealed class SessionBroker
 
     /// <param name="findServer">Busca un servidor vivo por su código; null si no hay ninguno.</param>
     /// <param name="udp">Reenvío UDP, donde se dan de alta y de baja las fichas de las sesiones.</param>
-    public SessionBroker(RelayOptions options, Func<string, ServerSession?> findServer, UdpForwarder udp)
+    /// <param name="warnings">Avisos de cosas que cualquiera puede provocar (como mucho uno por intervalo, tipo e IP).</param>
+    public SessionBroker(RelayOptions options, Func<string, ServerSession?> findServer, UdpForwarder udp, WarningThrottle warnings)
     {
         _options = options;
         _findServer = findServer;
         _udp = udp;
+        _warnings = warnings;
     }
 
     public int Count
@@ -50,23 +52,25 @@ internal sealed class SessionBroker
     {
         if (join.RelayVersion != ProtocolInfo.RelayVersion)
         {
-            await RefuseAsync(tcp, stream, RelayHost.VersionMismatchText(join.RelayVersion), ct);
+            await RefuseAsync(tcp, stream, RelayError.VersionMismatch, RelayHost.VersionMismatchText(join.RelayVersion), ct);
             return;
         }
 
         ServerSession? server = _findServer(join.Code ?? string.Empty);
         if (server == null)
         {
-            await RefuseAsync(tcp, stream, RelayHost.NoServerText, ct);
+            await RefuseAsync(tcp, stream, RelayError.NoServer, ct);
             return;
         }
 
         string code = ServerCode.Format(server.Code);
-        RelaySession? session = TryOpen(server.Code);
+        RelaySession? session = TryOpen(server.Code, remote, out RelayError refusal);
         if (session == null)
         {
-            RelayLog.Info($"[{code}] Jugador {remote} rechazado: ya hay {_options.MaxSessionsPerServer} sesiones por el relay");
-            await RefuseAsync(tcp, stream, Lang.T("El servidor está lleno", "The server is full"), ct);
+            _warnings.Info("sesión rechazada", remote, refusal == RelayError.ServerFull
+                ? $"[{code}] Jugador {remote} rechazado: ya hay {_options.MaxSessionsPerServer} sesiones por el relay"
+                : $"[{code}] Jugador {remote} rechazado: ya tiene {_options.MaxSessionsPerPlayerIp} sesiones con este servidor");
+            await RefuseAsync(tcp, stream, refusal, ct);
             return;
         }
 
@@ -75,8 +79,8 @@ internal sealed class SessionBroker
             Attachment? attachment = await WaitForAttachAsync(session, server, remote, ct);
             if (attachment == null)
             {
-                RelayLog.Info($"[{code}] El servidor no se enganchó a tiempo para el jugador {remote}");
-                await RefuseAsync(tcp, stream, Lang.T("El servidor no responde a través del relay", "The server is not answering through the relay"), ct);
+                _warnings.Info("sin enganche", remote, $"[{code}] El servidor no se enganchó a tiempo para el jugador {remote}");
+                await RefuseAsync(tcp, stream, RelayError.ServerNotAnswering, ct);
                 return;
             }
 
@@ -84,7 +88,7 @@ internal sealed class SessionBroker
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 deadline.CancelAfter(_options.FirstMessageTimeout);
-                await RelayWire.WriteAsync(stream, new RelayJoinResultMessage { Ok = true, Error = string.Empty }, deadline.Token);
+                await RelayWire.WriteAsync(stream, new RelayJoinResultMessage { Ok = true, ErrorCode = RelayError.None, Error = string.Empty }, deadline.Token);
             }
 
             RelayLog.Info($"[{code}] Jugador {remote} conectado por el relay (sesión {session.Id})");
@@ -99,9 +103,10 @@ internal sealed class SessionBroker
 
     /// <summary>
     /// Atiende la conexión que abre el servidor para una sesión. Si es válida, la conexión pasa a la sesión y esto
-    /// vuelve cuando la sesión termina; si no, vuelve enseguida y quien llama la cierra.
+    /// vuelve cuando la sesión termina; si no, vuelve enseguida y quien llama la cierra. <paramref name="accepted"/> se
+    /// llama en cuanto el enganche se acepta.
     /// </summary>
-    public async Task AttachAsync(TcpClient tcp, NetworkStream stream, IPAddress remote, RelayAttachMessage attach, CancellationToken ct)
+    public async Task AttachAsync(TcpClient tcp, NetworkStream stream, IPAddress remote, RelayAttachMessage attach, Action accepted, CancellationToken ct)
     {
         RelaySession? session = null;
         if (attach.RelayVersion == ProtocolInfo.RelayVersion)
@@ -113,10 +118,11 @@ internal sealed class SessionBroker
         // TrySetResult falla si la sesión ya caducó o ya tenía enganche: solo vale el primero, y a tiempo.
         if (session == null || session.Secret != attach.Secret || !session.Attach.TrySetResult(new Attachment(tcp, stream)))
         {
-            RelayLog.Warn($"Enganche rechazado desde {remote}: sesión desconocida, caducada o con otro secreto");
+            _warnings.Warn("enganche rechazado", remote, $"Enganche rechazado desde {remote}: sesión desconocida, caducada o con otro secreto");
             return;
         }
 
+        accepted();
         await session.Finished.Task.WaitAsync(ct);
     }
 
@@ -151,19 +157,45 @@ internal sealed class SessionBroker
         }
     }
 
-    private RelaySession? TryOpen(string code)
+    /// <summary>
+    /// Abre una sesión con el servidor <paramref name="code"/> si no está lleno y si el jugador no tiene ya demasiadas
+    /// con él: así una sola IP no puede ocupar todas las plazas de un servidor y dejar fuera a los demás.
+    /// </summary>
+    private RelaySession? TryOpen(string code, IPAddress player, out RelayError refusal)
     {
         lock (_lock)
         {
-            if (_sessions.Values.Count(s => s.Code == code) >= _options.MaxSessionsPerServer)
-                return null;
+            int forServer = 0;
+            int fromPlayer = 0;
+            foreach (RelaySession open in _sessions.Values)
+            {
+                if (open.Code != code)
+                    continue;
 
+                forServer++;
+                if (open.Player.Equals(player))
+                    fromPlayer++;
+            }
+
+            if (forServer >= _options.MaxSessionsPerServer)
+            {
+                refusal = RelayError.ServerFull;
+                return null;
+            }
+
+            if (fromPlayer >= _options.MaxSessionsPerPlayerIp)
+            {
+                refusal = RelayError.TooManySessionsFromIp;
+                return null;
+            }
+
+            refusal = RelayError.None;
             long id;
             do
                 id = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8)) & long.MaxValue;
             while (id == 0 || _sessions.ContainsKey(id));
 
-            var session = new RelaySession(id, BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8)), code, NewLimiter(), NewLimiter());
+            var session = new RelaySession(id, BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8)), code, player, NewLimiter(), NewLimiter());
             _sessions[id] = session;
             return session;
         }
@@ -252,7 +284,7 @@ internal sealed class SessionBroker
         }
     }
 
-    private RateLimiter NewLimiter() => new(_options.BytesPerSecond, () => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+    private RateLimiter NewLimiter() => new(_options.BytesPerSecond, RateLimiter.Now);
 
     /// <summary>Quita la sesión, olvida su ficha UDP y despierta a quien espera por ella (el enganche, si lo hubo).</summary>
     private void Close(RelaySession session)
@@ -268,8 +300,12 @@ internal sealed class SessionBroker
         session.Finished.TrySetResult();
     }
 
-    private Task RefuseAsync(TcpClient tcp, NetworkStream stream, string error, CancellationToken ct) =>
-        RelayWire.ReplyAndCloseAsync(tcp, stream, new RelayJoinResultMessage { Ok = false, Error = error }, _options.FirstMessageTimeout, ct);
+    private Task RefuseAsync(TcpClient tcp, NetworkStream stream, RelayError error, CancellationToken ct) =>
+        RefuseAsync(tcp, stream, error, RelayErrorText.Describe(error, string.Empty), ct);
+
+    /// <summary>Contesta que no y cierra. El texto (en el idioma del relay) solo lo usa un mod que no conozca el código.</summary>
+    private Task RefuseAsync(TcpClient tcp, NetworkStream stream, RelayError error, string text, CancellationToken ct) =>
+        RelayWire.ReplyAndCloseAsync(tcp, stream, new RelayJoinResultMessage { Ok = false, ErrorCode = error, Error = text }, _options.FirstMessageTimeout, ct);
 
     private static void Dispose(TcpClient tcp)
     {
@@ -286,11 +322,12 @@ internal sealed class SessionBroker
 
     private sealed class RelaySession
     {
-        public RelaySession(long id, ulong secret, string code, RateLimiter up, RateLimiter down)
+        public RelaySession(long id, ulong secret, string code, IPAddress player, RateLimiter up, RateLimiter down)
         {
             Id = id;
             Secret = secret;
             Code = code;
+            Player = player;
             Up = up;
             Down = down;
         }
@@ -301,6 +338,9 @@ internal sealed class SessionBroker
 
         /// <summary>Código (sin guion) del servidor de la sesión, para el límite de sesiones por servidor.</summary>
         public string Code { get; }
+
+        /// <summary>IP del jugador, para el límite de sesiones por jugador y servidor.</summary>
+        public IPAddress Player { get; }
 
         /// <summary>Tope del sentido jugador → servidor, para la TCP y el UDP.</summary>
         public RateLimiter Up { get; }

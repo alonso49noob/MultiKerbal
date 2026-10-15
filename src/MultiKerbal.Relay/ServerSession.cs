@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
+using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Relay;
 
 namespace MultiKerbal.Relay;
 
@@ -34,7 +36,7 @@ internal sealed class ServerSession
         _heartbeatTimeout = heartbeatTimeout;
         Code = code;
         UdpSecret = udpSecret;
-        _info = info;
+        _info = Clean(info);
         GamePort = gamePort;
         RemoteAddress = remoteAddress;
         RegisteredAt = DateTime.UtcNow;
@@ -46,7 +48,7 @@ internal sealed class ServerSession
 
     public ulong UdpSecret { get; }
 
-    /// <summary>Datos del último latido.</summary>
+    /// <summary>Datos del último latido, con el nombre y la versión ya limpios y cortados.</summary>
     public RelayServerInfo Info => _info;
 
     /// <summary>Puerto del juego en el servidor.</summary>
@@ -135,8 +137,23 @@ internal sealed class ServerSession
         }
     }
 
-    /// <summary>Espera hasta que se pida otra comprobación o pase <paramref name="interval"/>.</summary>
-    public async Task WaitForRecheckAsync(TimeSpan interval, CancellationToken ct) => await _recheck.WaitAsync(interval, ct);
+    /// <summary>Espera hasta que se pida otra comprobación (true) o pase <paramref name="interval"/> (false).</summary>
+    public Task<bool> WaitForRecheckAsync(TimeSpan interval, CancellationToken ct) => _recheck.WaitAsync(interval, ct);
+
+    /// <summary>
+    /// Copia de los datos que manda el servidor con el nombre y la versión limpios y cortados: así la lista, la consulta
+    /// y la memoria del relay no guardan textos enormes ni caracteres de control.
+    /// </summary>
+    public static RelayServerInfo Clean(RelayServerInfo info) => new()
+    {
+        Name = ListedName.Sanitize(info.Name),
+        Players = info.Players,
+        MaxPlayers = info.MaxPlayers,
+        HasPassword = info.HasPassword,
+        IsPublic = info.IsPublic,
+        GameProtocol = info.GameProtocol,
+        ModVersion = ListedName.Sanitize(info.ModVersion, ProtocolInfo.MaxListedVersionLength),
+    };
 
     /// <summary>
     /// Lee el control hasta que se cierre, se corte o caduque. Cada mensaje cuenta como señal de vida,
@@ -160,7 +177,7 @@ internal sealed class ServerSession
                 switch (message)
                 {
                     case RelayHeartbeatMessage { Info: not null } heartbeat:
-                        _info = heartbeat.Info;
+                        _info = Clean(heartbeat.Info);
                         break;
 
                     case RelayRecheckMessage:

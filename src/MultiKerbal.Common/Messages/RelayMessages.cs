@@ -2,6 +2,35 @@ using MultiKerbal.Common.Serialization;
 
 namespace MultiKerbal.Common.Messages
 {
+    /// <summary>
+    /// Motivo de un error del relay. El mod y el servidor escriben el texto en su idioma a partir de este código
+    /// (<see cref="Relay.RelayErrorText"/>); el texto que manda el relay solo se usa si el código es desconocido.
+    /// </summary>
+    public enum RelayError : byte
+    {
+        None = 0,
+
+        /// <summary>Sin código propio: vale el texto que manda el relay.</summary>
+        Other = 1,
+
+        VersionMismatch = 2,
+        NoServer = 3,
+        ServerFull = 4,
+        ServerNotAnswering = 5,
+
+        /// <summary>Demasiadas sesiones desde la IP del jugador hacia ese servidor.</summary>
+        TooManySessionsFromIp = 6,
+
+        Banned = 7,
+        TooManyServersFromIp = 8,
+
+        /// <summary>Demasiadas claves nuevas (códigos nuevos) desde la misma IP en poco tiempo.</summary>
+        TooManyNewCodes = 9,
+
+        CodeNotSaved = 10,
+        InvalidGamePort = 11,
+    }
+
     /// <summary>Datos de un servidor que el relay muestra en la lista y comprueba al entrar.</summary>
     public sealed class RelayServerInfo
     {
@@ -152,11 +181,30 @@ namespace MultiKerbal.Common.Messages
     {
         public MessageType Type => MessageType.RelayRejected;
 
+        public RelayError ErrorCode;
+
+        /// <summary>
+        /// El rechazo no se arregla solo (otra versión del protocolo, servidor bloqueado): el servidor deja de intentarlo.
+        /// Si es falso, vuelve a intentarlo pasado un rato.
+        /// </summary>
+        public bool Permanent;
+
+        /// <summary>Texto del relay, para códigos que el servidor no conozca.</summary>
         public string Reason;
 
-        public void Write(PacketWriter writer) => writer.WriteString(Reason);
+        public void Write(PacketWriter writer)
+        {
+            writer.WriteByte((byte)ErrorCode);
+            writer.WriteBool(Permanent);
+            writer.WriteString(Reason);
+        }
 
-        public void Read(PacketReader reader) => Reason = reader.ReadString();
+        public void Read(PacketReader reader)
+        {
+            ErrorCode = (RelayError)reader.ReadByte();
+            Permanent = reader.ReadBool();
+            Reason = reader.ReadString();
+        }
     }
 
     /// <summary>Servidor → relay. Latido periódico con los datos al día.</summary>
@@ -350,6 +398,9 @@ namespace MultiKerbal.Common.Messages
         public string DirectHost;
 
         public int DirectPort;
+        public RelayError ErrorCode;
+
+        /// <summary>Texto del relay, para códigos que el jugador no conozca.</summary>
         public string Error;
 
         public void Write(PacketWriter writer)
@@ -360,6 +411,7 @@ namespace MultiKerbal.Common.Messages
             writer.WriteString(ModVersion);
             writer.WriteString(DirectHost);
             writer.WriteInt32(DirectPort);
+            writer.WriteByte((byte)ErrorCode);
             writer.WriteString(Error);
         }
 
@@ -371,6 +423,7 @@ namespace MultiKerbal.Common.Messages
             ModVersion = reader.ReadString();
             DirectHost = reader.ReadString();
             DirectPort = reader.ReadInt32();
+            ErrorCode = (RelayError)reader.ReadByte();
             Error = reader.ReadString();
         }
     }
@@ -402,17 +455,22 @@ namespace MultiKerbal.Common.Messages
         public MessageType Type => MessageType.RelayJoinResult;
 
         public bool Ok;
+        public RelayError ErrorCode;
+
+        /// <summary>Texto del relay, para códigos que el jugador no conozca.</summary>
         public string Error;
 
         public void Write(PacketWriter writer)
         {
             writer.WriteBool(Ok);
+            writer.WriteByte((byte)ErrorCode);
             writer.WriteString(Error);
         }
 
         public void Read(PacketReader reader)
         {
             Ok = reader.ReadBool();
+            ErrorCode = (RelayError)reader.ReadByte();
             Error = reader.ReadString();
         }
     }

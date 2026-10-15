@@ -28,6 +28,9 @@ public sealed partial class RelayHost
     private readonly ConcurrentDictionary<TcpClient, byte> _connections = new();
 
     private readonly CancellationTokenSource _cts = new();
+    private readonly WarningThrottle _warnings;
+    private readonly ConnectionGate _gate;
+    private readonly NewCodeBudget _newCodes;
     private readonly SessionBroker _broker;
     private readonly UdpForwarder _forwarder;
     private readonly ReachabilityProber _prober;
@@ -42,8 +45,11 @@ public sealed partial class RelayHost
     internal RelayHost(RelayOptions options)
     {
         _options = options;
+        _warnings = new WarningThrottle(options.WarningInterval, RateLimiter.Now);
+        _gate = new ConnectionGate(options, RateLimiter.Now);
+        _newCodes = new NewCodeBudget(options.MaxNewCodesPerIp, options.NewCodeWindow, RateLimiter.Now);
         _forwarder = new UdpForwarder(FindServerBySecret);
-        _broker = new SessionBroker(options, FindServer, _forwarder);
+        _broker = new SessionBroker(options, FindServer, _forwarder, _warnings);
         _prober = new ReachabilityProber(options);
     }
 
@@ -68,8 +74,7 @@ public sealed partial class RelayHost
     /// <summary>Comprobaciones de acceso directo terminadas (para los tests).</summary>
     internal int ProbeCount => _prober.ProbeCount;
 
-    internal static string NoServerText => Lang.T("No hay ningún servidor encendido con ese código", "There is no server running with that code");
-
+    /// <summary>Texto de una versión distinta, en el idioma del relay: solo lo usa un mod que no conozca el código del error.</summary>
     internal static string VersionMismatchText(int theirs) => Lang.T(
         $"El relay usa otra versión del protocolo (relay {ProtocolInfo.RelayVersion}, tú {theirs}). Actualiza MultiKerbal.",
         $"The relay uses another protocol version (relay {ProtocolInfo.RelayVersion}, you {theirs}). Update MultiKerbal.");
@@ -209,43 +214,105 @@ public sealed partial class RelayHost
         return socket;
     }
 
-    private async Task AcceptLoopAsync(CancellationToken ct)
+    private Task AcceptLoopAsync(CancellationToken ct) =>
+        RunAcceptLoopAsync(token => _listener!.AcceptTcpClientAsync(token), tcp => OnAccepted(tcp, ct), _options.AcceptErrorDelay, _warnings, ct);
+
+    /// <summary>
+    /// Acepta conexiones hasta que se pare el relay (cancelación o puerto cerrado). Un error al aceptar (por ejemplo, sin
+    /// descriptores libres) se anota y se espera <paramref name="errorDelay"/> antes de seguir, para no dar vueltas sin
+    /// parar; cualquier otro fallo también se anota y se sigue aceptando.
+    /// </summary>
+    internal static async Task RunAcceptLoopAsync(Func<CancellationToken, ValueTask<TcpClient>> accept, Action<TcpClient> onAccepted,
+        TimeSpan errorDelay, WarningThrottle warnings, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             TcpClient tcp;
             try
             {
-                tcp = await _listener!.AcceptTcpClientAsync(ct);
+                tcp = await accept(ct);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
             {
                 return;
             }
-            catch (SocketException ex)
+            catch (Exception ex)
             {
-                RelayLog.Warn($"Error al aceptar una conexión: {ex.SocketErrorCode}");
+                if (ex is SocketException socketError)
+                    warnings.Warn("error al aceptar", null, $"Error al aceptar una conexión: {socketError.SocketErrorCode}");
+                else
+                    warnings.Error("error inesperado al aceptar", null, $"Error inesperado al aceptar una conexión: {ex}");
+
+                try
+                {
+                    await Task.Delay(errorDelay, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
                 continue;
             }
 
-            _ = HandleConnectionAsync(tcp, ct);
+            try
+            {
+                onAccepted(tcp);
+            }
+            catch (Exception ex)
+            {
+                warnings.Error("error inesperado al aceptar", null, $"Error inesperado con una conexión recién aceptada: {ex}");
+                Dispose(tcp);
+            }
         }
     }
 
-    /// <summary>Lee el primer mensaje (con plazo) y encamina la conexión según lo que sea.</summary>
-    private async Task HandleConnectionAsync(TcpClient tcp, CancellationToken ct)
+    /// <summary>
+    /// Nada más aceptar: mira la IP y los límites por IP (conexiones abiertas y ritmo de conexiones nuevas) antes de
+    /// leer nada. Si los pasa, la conexión sigue en su propia tarea.
+    /// </summary>
+    private void OnAccepted(TcpClient tcp, CancellationToken ct)
+    {
+        if (!TryGetRemote(tcp, out IPAddress remote))
+        {
+            Dispose(tcp);
+            return;
+        }
+
+        if (!_gate.TryEnter(remote, out string refusal))
+        {
+            _warnings.Warn("conexión rechazada", remote, $"Conexión de {remote} rechazada: {refusal}");
+            Dispose(tcp);
+            return;
+        }
+
+        _ = HandleConnectionAsync(tcp, remote, ct);
+    }
+
+    /// <summary>Lee el primer mensaje (con plazo y tamaño máximo) y encamina la conexión según lo que sea.</summary>
+    private async Task HandleConnectionAsync(TcpClient tcp, IPAddress remote, CancellationToken ct)
     {
         _connections[tcp] = 0;
+
+        // La conexión cuenta para el límite de su IP hasta que se cierra o hasta que resulta ser el control o un
+        // enganche de un servidor (un servidor con muchos jugadores tiene muchos enganches abiertos a la vez).
+        int counted = 1;
+        void StopCounting()
+        {
+            if (Interlocked.Exchange(ref counted, 0) != 0)
+                _gate.Leave(remote);
+        }
+
         try
         {
-            if (!TryPrepare(tcp, out IPAddress remote, out NetworkStream stream))
+            if (!TryPrepare(tcp, out NetworkStream stream))
                 return;
 
             IMessage? first;
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 deadline.CancelAfter(_options.FirstMessageTimeout);
-                first = await RelayWire.ReadAsync(stream, deadline.Token);
+                first = await RelayWire.ReadAsync(stream, _options.MaxFirstMessageBytes, deadline.Token);
             }
 
             switch (first)
@@ -254,6 +321,7 @@ public sealed partial class RelayHost
                     ServerSession? session = await RegisterAsync(tcp, stream, remote, register, ct);
                     if (session != null)
                     {
+                        StopCounting();
                         _prober.Watch(session, ct);
                         await session.RunAsync((server, token) => _broker.SetUdpToken(server.Code, token.SessionId, token.Token), ct);
                         Unregister(session);
@@ -270,14 +338,14 @@ public sealed partial class RelayHost
                     break;
 
                 case RelayAttachMessage attach:
-                    await _broker.AttachAsync(tcp, stream, remote, attach, ct);
+                    await _broker.AttachAsync(tcp, stream, remote, attach, StopCounting, ct);
                     break;
 
                 case RelayListRequestMessage listRequest:
                     if (listRequest.RelayVersion != ProtocolInfo.RelayVersion)
                     {
                         // La respuesta no tiene campo de error: sin entender la petición, se cierra sin contestar.
-                        RelayLog.Warn($"Lista pedida desde {remote} con otra versión del relay ({listRequest.RelayVersion}): conexión cerrada");
+                        _warnings.Warn("lista de otra versión", remote, $"Lista pedida desde {remote} con otra versión del relay ({listRequest.RelayVersion}): conexión cerrada");
                         break;
                     }
 
@@ -288,7 +356,7 @@ public sealed partial class RelayHost
                     break;
 
                 default:
-                    RelayLog.Warn($"Conexión de {remote} cerrada: primer mensaje no admitido ({first.Type})");
+                    _warnings.Warn("primer mensaje no admitido", remote, $"Conexión de {remote} cerrada: primer mensaje no admitido ({first.Type})");
                     break;
             }
         }
@@ -302,6 +370,7 @@ public sealed partial class RelayHost
         }
         finally
         {
+            StopCounting();
             Dispose(tcp);
             _connections.TryRemove(tcp, out _);
         }
@@ -315,30 +384,29 @@ public sealed partial class RelayHost
     {
         if (register.RelayVersion != ProtocolInfo.RelayVersion)
         {
-            await RejectAsync(tcp, stream, remote, Lang.T(
+            await RejectAsync(tcp, stream, remote, RelayError.VersionMismatch, permanent: true, ct, Lang.T(
                 $"Versión del relay incompatible (relay {ProtocolInfo.RelayVersion}, servidor {register.RelayVersion}). Actualiza MultiKerbal.",
-                $"Incompatible relay version (relay {ProtocolInfo.RelayVersion}, server {register.RelayVersion}). Update MultiKerbal."), ct);
+                $"Incompatible relay version (relay {ProtocolInfo.RelayVersion}, server {register.RelayVersion}). Update MultiKerbal."));
             return null;
         }
 
         if (register.GamePort < 1 || register.GamePort > 65535)
         {
-            await RejectAsync(tcp, stream, remote, Lang.T("Puerto de juego inválido", "Invalid game port"), ct);
+            await RejectAsync(tcp, stream, remote, RelayError.InvalidGamePort, permanent: false, ct);
             return null;
         }
 
         RelayServerInfo info = register.Info;
-        info.Name ??= string.Empty;
-        info.ModVersion ??= string.Empty;
-
-        string? rejection = null;
+        RelayError rejection = RelayError.None;
+        bool permanent = false;
+        bool newKey = false;
         string code = string.Empty;
         ServerSession? replaced = null;
         ServerSession? session = null;
 
-        // Todo bajo el cerrojo del registro: el límite por IP y el baneo se miran antes de asignar el código
-        // (un registro rechazado no debe gastar un código ni escribir en disco) y sin cruzarse con otro registro
-        // ni con el comando ban.
+        // Bajo el cerrojo del registro: el baneo y los límites por IP se miran antes de asignar el código (un registro
+        // rechazado no debe gastar un código), sin cruzarse con otro registro ni con el comando ban. Un código nuevo
+        // solo se reserva en memoria; el disco se escribe después, fuera del cerrojo.
         lock (_registryLock)
         {
             if (_stopping)
@@ -347,7 +415,8 @@ public sealed partial class RelayHost
             bool knownKey = _codes!.TryGetCode(register.Key, out code);
             if (knownKey && _codes.IsBanned(code))
             {
-                rejection = Lang.T("Este servidor está bloqueado en el relay", "This server is blocked on the relay");
+                rejection = RelayError.Banned;
+                permanent = true;
             }
             else
             {
@@ -358,30 +427,32 @@ public sealed partial class RelayHost
                 int sameIp = _servers.Values.Count(s => s != replaced && s.RemoteAddress.Equals(remote));
                 if (sameIp >= _options.MaxServersPerIp)
                 {
-                    rejection = Lang.T(
-                        $"Demasiados servidores desde tu IP (máximo {_options.MaxServersPerIp})",
-                        $"Too many servers from your IP (maximum {_options.MaxServersPerIp})");
+                    rejection = RelayError.TooManyServersFromIp;
+                }
+                else if (!knownKey && !_newCodes.TryTake(remote))
+                {
+                    // Cada clave nueva gasta un código para siempre: una IP no puede pedir códigos sin fin.
+                    rejection = RelayError.TooManyNewCodes;
                 }
                 else
                 {
-                    try
-                    {
-                        code = _codes.GetOrAssign(register.Key);
-                        session = new ServerSession(tcp, code, NewSecret(), info, register.GamePort, remote, _options.HeartbeatTimeout);
-                        _servers[code] = session;
-                    }
-                    catch (IOException ex)
-                    {
-                        RelayLog.Error($"No se pudo guardar el código de un servidor nuevo: {ex.Message}");
-                        rejection = Lang.T("El relay no pudo guardar tu código. Inténtalo más tarde.", "The relay could not save your code. Try again later.");
-                    }
+                    code = _codes.Reserve(register.Key, out newKey);
+                    session = new ServerSession(tcp, code, NewSecret(), info, register.GamePort, remote, _options.HeartbeatTimeout);
+                    _servers[code] = session;
                 }
             }
         }
 
+        if (session != null && newKey && !TryPersistCode(session))
+        {
+            session = null;
+            replaced = null;
+            rejection = RelayError.CodeNotSaved;
+        }
+
         if (session == null)
         {
-            await RejectAsync(tcp, stream, remote, rejection!, ct);
+            await RejectAsync(tcp, stream, remote, rejection, permanent, ct);
             return null;
         }
 
@@ -404,8 +475,34 @@ public sealed partial class RelayHost
             return null;
         }
 
-        RelayLog.Info($"[{ServerCode.Format(code)}] Servidor registrado: \"{ListedName.Sanitize(info.Name)}\" desde {remote}, puerto de juego {register.GamePort}");
+        RelayLog.Info($"[{ServerCode.Format(code)}] Servidor registrado: \"{session.Info.Name}\" desde {remote}, puerto de juego {register.GamePort}");
         return session;
+    }
+
+    /// <summary>
+    /// Guarda en codes.json el código nuevo de una sesión recién registrada, sin el cerrojo del registro. Si no se puede,
+    /// la quita del registro y suelta el código (false).
+    /// </summary>
+    private bool TryPersistCode(ServerSession session)
+    {
+        try
+        {
+            _codes!.Persist(session.Code);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            RelayLog.Error($"No se pudo guardar el código de un servidor nuevo: {ex.Message}");
+        }
+
+        lock (_registryLock)
+        {
+            if (_servers.TryGetValue(session.Code, out ServerSession? current) && current == session)
+                _servers.Remove(session.Code);
+        }
+
+        _codes!.Forget(session.Code);
+        return false;
     }
 
     /// <summary>Quita la sesión del registro, salvo que otra más nueva ya la haya sustituido.</summary>
@@ -432,23 +529,25 @@ public sealed partial class RelayHost
     private RelayLookupResultMessage BuildLookupResult(RelayLookupMessage lookup)
     {
         if (lookup.RelayVersion != ProtocolInfo.RelayVersion)
-            return NotFound(VersionMismatchText(lookup.RelayVersion));
+            return NotFound(RelayError.VersionMismatch, VersionMismatchText(lookup.RelayVersion));
 
         if (!TryGetServer(lookup.Code ?? string.Empty, out ServerSession? server))
-            return NotFound(NoServerText);
+            return NotFound(RelayError.NoServer, RelayErrorText.Describe(RelayError.NoServer, string.Empty));
 
+        // El nombre y la versión ya llegan limpios y cortados (ServerSession.Clean).
         RelayServerInfo info = server.Info;
         bool direct = server.IsDirect;
         return new RelayLookupResultMessage
         {
             Found = true,
-            Name = ListedName.Sanitize(info.Name),
+            Name = info.Name,
             GameProtocol = info.GameProtocol,
-            ModVersion = info.ModVersion ?? string.Empty,
+            ModVersion = info.ModVersion,
 
             // Solo si la última comprobación pudo llegar por TCP y por UDP; si no, se entra por el relay.
             DirectHost = direct ? server.RemoteAddress.ToString() : string.Empty,
             DirectPort = direct ? server.GamePort : 0,
+            ErrorCode = RelayError.None,
             Error = string.Empty,
         };
     }
@@ -475,12 +574,12 @@ public sealed partial class RelayHost
             entries.Add(new PublicServerEntry
             {
                 Code = session.Code,
-                Name = ListedName.Sanitize(info.Name),
+                Name = info.Name,
                 Players = info.Players,
                 MaxPlayers = info.MaxPlayers,
                 HasPassword = info.HasPassword,
                 GameProtocol = info.GameProtocol,
-                ModVersion = info.ModVersion ?? string.Empty,
+                ModVersion = info.ModVersion,
                 Direct = session.IsDirect,
             });
         }
@@ -494,38 +593,58 @@ public sealed partial class RelayHost
         return new RelayListResponseMessage { Servers = sorted };
     }
 
-    private static RelayLookupResultMessage NotFound(string error) => new()
+    private static RelayLookupResultMessage NotFound(RelayError error, string text) => new()
     {
         Found = false,
         Name = string.Empty,
         ModVersion = string.Empty,
         DirectHost = string.Empty,
-        Error = error,
+        ErrorCode = error,
+        Error = text,
     };
 
-    private async Task RejectAsync(TcpClient tcp, NetworkStream stream, IPAddress remote, string reason, CancellationToken ct)
+    /// <summary>
+    /// Rechaza un registro y cierra. <paramref name="permanent"/> solo para lo que no se arregla solo (otra versión,
+    /// baneo): con lo demás, el servidor vuelve a intentarlo pasado un rato. El texto va en el idioma del relay y solo lo
+    /// usa un servidor que no conozca el código.
+    /// </summary>
+    private async Task RejectAsync(TcpClient tcp, NetworkStream stream, IPAddress remote, RelayError error, bool permanent, CancellationToken ct, string? text = null)
     {
-        RelayLog.Info($"Registro rechazado ({remote}): {reason}");
-        await ReplyAndCloseAsync(tcp, stream, new RelayRejectedMessage { Reason = reason }, ct);
+        string reason = text ?? RelayErrorText.Describe(error, string.Empty);
+        _warnings.Info("registro rechazado", remote, $"Registro rechazado ({remote}): {reason}");
+        await ReplyAndCloseAsync(tcp, stream, new RelayRejectedMessage { ErrorCode = error, Permanent = permanent, Reason = reason }, ct);
     }
 
     private Task ReplyAndCloseAsync(TcpClient tcp, NetworkStream stream, IMessage reply, CancellationToken ct) =>
         RelayWire.ReplyAndCloseAsync(tcp, stream, reply, _options.FirstMessageTimeout, ct);
 
     /// <summary>
-    /// Saca la IP de quien llama y el flujo de la conexión. Falla (false) si el otro lado ya se había ido
-    /// cuando se aceptó, que es lo único esperable aquí.
+    /// La IP de quien llama (IPv4 normal aunque el socket sea de doble pila). Falla (false) si el otro lado ya se había
+    /// ido cuando se aceptó, que es lo único esperable aquí.
     /// </summary>
-    private static bool TryPrepare(TcpClient tcp, out IPAddress remote, out NetworkStream stream)
+    private static bool TryGetRemote(TcpClient tcp, out IPAddress remote)
     {
         remote = IPAddress.None;
-        stream = null!;
         try
         {
             if (tcp.Client.RemoteEndPoint is not IPEndPoint endPoint)
                 return false;
 
             remote = endPoint.Address.IsIPv4MappedToIPv6 ? endPoint.Address.MapToIPv4() : endPoint.Address;
+            return true;
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>El flujo de la conexión. Falla (false) si el otro lado ya se ha ido.</summary>
+    private static bool TryPrepare(TcpClient tcp, out NetworkStream stream)
+    {
+        stream = null!;
+        try
+        {
             tcp.NoDelay = true;
             stream = tcp.GetStream();
             return true;

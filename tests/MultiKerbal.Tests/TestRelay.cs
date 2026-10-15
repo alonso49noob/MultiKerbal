@@ -31,6 +31,14 @@ internal sealed class TestRelay : IDisposable
             AttachTimeout = TimeSpan.FromSeconds(3),
             ProbeTimeout = TimeSpan.FromSeconds(1),
             CloseGrace = TimeSpan.FromMilliseconds(300),
+
+            // Todas las pruebas llegan desde 127.0.0.1: los límites por IP se prueban aparte, con valores propios.
+            MinRecheckInterval = TimeSpan.Zero,
+            MaxNewCodesPerIp = 1000,
+            MaxSessionsPerPlayerIp = 1000,
+            MaxConnectionsPerIp = 1000,
+            NewConnectionsPerSecondPerIp = 10_000,
+            NewConnectionBurstPerIp = 10_000,
         };
         configure?.Invoke(_options);
         Host = StartHost();

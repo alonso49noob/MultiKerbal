@@ -13,7 +13,10 @@ internal static class RelayWire
     /// Lee un mensaje. Devuelve null si la conexión termina. La longitud se comprueba contra el límite del relay
     /// antes de reservar memoria; si lo pasa, lanza <see cref="ProtocolException"/>.
     /// </summary>
-    public static async Task<IMessage?> ReadAsync(Stream stream, CancellationToken ct)
+    public static Task<IMessage?> ReadAsync(Stream stream, CancellationToken ct) => ReadAsync(stream, ProtocolInfo.MaxRelayMessageBytes, ct);
+
+    /// <summary>Como <see cref="ReadAsync(Stream, CancellationToken)"/>, con un límite propio (el del primer mensaje es más pequeño).</summary>
+    public static async Task<IMessage?> ReadAsync(Stream stream, int maxBytes, CancellationToken ct)
     {
         var header = new byte[FrameCodec.TcpHeaderSize];
         try
@@ -26,7 +29,7 @@ internal static class RelayWire
         }
 
         FrameCodec.ParseTcpHeader(header, out int payloadLength, out ushort type);
-        if (payloadLength > ProtocolInfo.MaxRelayMessageBytes)
+        if (payloadLength > maxBytes)
             throw new ProtocolException($"Mensaje demasiado grande para el relay: {payloadLength} bytes");
 
         var payload = new byte[payloadLength];

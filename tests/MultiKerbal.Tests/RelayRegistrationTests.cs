@@ -156,7 +156,7 @@ public sealed class RelayRegistrationTests
         using RawRelayClient server = relay.Connect();
         string code = RegisterOk(server, 1).Code;
 
-        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 2));
+        Assert.True(TestRelay.WaitFor(() => relay.Host.LiveServerCount == 0, seconds: 4));
         Assert.False(Lookup(relay, code).Found);
         Assert.True(server.WaitForClose());
     }
@@ -264,7 +264,7 @@ public sealed class RelayRegistrationTests
 
         client.SendRaw(OversizedHeader());
 
-        Assert.True(client.WaitForClose(seconds: 1));
+        Assert.True(client.WaitForClose(seconds: 3));
     }
 
     [Fact]

@@ -22,6 +22,9 @@ internal sealed class RelayLink
 
     private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(2);
 
+    /// <summary>Límite del motivo de un rechazo que manda el relay (se muestra en Hospedar y en el registro).</summary>
+    private const int MaxReasonLength = 200;
+
     private readonly string _relayAddress;
     private readonly string _host;
     private readonly int _port;
@@ -47,6 +50,9 @@ internal sealed class RelayLink
 
     /// <summary>La conexión actual llegó a registrarse. Solo la toca la tarea del enlace.</summary>
     private bool _registeredThisConnection;
+
+    /// <summary>El último rechazo del relay es definitivo (otra versión, baneo): no se vuelve a intentar. Solo la tarea del enlace.</summary>
+    private bool _permanentRejection;
 
     /// <param name="relayAddress">"host" o "host:puerto" (por defecto, el puerto del relay).</param>
     /// <param name="info">Datos al día del servidor; se pide en cada latido, desde el hilo del enlace.</param>
@@ -190,7 +196,17 @@ internal sealed class RelayLink
             {
                 await RunConnectionAsync(ct);
                 if (State == RelayLinkState.Rejected)
-                    return;
+                {
+                    if (_permanentRejection)
+                        return;
+
+                    // Un rechazo que puede arreglarse solo (demasiados servidores desde la IP, el relay no pudo guardar
+                    // el código...): se sigue mostrando el motivo, y se vuelve a intentar pasado el tiempo máximo.
+                    Log.Info($"Relay {_relayAddress}: se volverá a intentar el registro en {_options.RetryMax.TotalSeconds:0.#} s");
+                    await Task.Delay(_options.RetryMax, ct);
+                    delay = _options.RetryInitial;
+                    continue;
+                }
 
                 failure = Lang.T("Se perdió la conexión con el relay", "The connection to the relay was lost");
             }
@@ -278,11 +294,12 @@ internal sealed class RelayLink
                 break;
 
             case RelayRejectedMessage rejected:
-                string reason = string.IsNullOrWhiteSpace(rejected.Reason)
-                    ? Lang.T("El relay rechazó el registro", "The relay rejected the registration")
-                    : rejected.Reason;
+                string reason = RelayErrorText.Describe(rejected.ErrorCode, ListedName.Sanitize(rejected.Reason, MaxReasonLength));
+                if (reason.Length == 0)
+                    reason = Lang.T("El relay rechazó el registro", "The relay rejected the registration");
+                _permanentRejection = rejected.Permanent;
                 SetState(RelayLinkState.Rejected, string.Empty, reason);
-                Log.Warn($"El relay {_relayAddress} ha rechazado el registro: {reason}");
+                Log.Warn($"El relay {_relayAddress} ha rechazado el registro{(rejected.Permanent ? string.Empty : " (por ahora)")}: {reason}");
                 return;
 
             case null:

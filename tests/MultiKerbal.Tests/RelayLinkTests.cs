@@ -143,11 +143,35 @@ public sealed class RelayLinkTests
         Assert.False(string.IsNullOrEmpty(LinkOf(server).Error));
         Assert.Equal(string.Empty, LinkOf(server).Code);
 
-        // Tras el desbaneo no vuelve solo: Rejected es definitivo hasta reiniciar.
+        // El baneo es un rechazo definitivo: tras el desbaneo no vuelve solo (ni pasado RetryMax, 1 s aquí) hasta reiniciar.
+        Assert.Equal(RelayErrorText.Describe(RelayError.Banned, string.Empty), LinkOf(server).Error);
         relay.Host.ExecuteCommand($"unban {code}");
-        Thread.Sleep(800);
+        Thread.Sleep(1500);
         Assert.Equal(RelayLinkState.Rejected, LinkOf(server).State);
         Assert.Equal(0, relay.Host.LiveServerCount);
+    }
+
+    [Fact]
+    public void TemporaryRejection_ShowsRejected_AndRetriesAfterRetryMax()
+    {
+        using var relay = new TestRelay(o =>
+        {
+            LongLived(o);
+            o.MaxServersPerIp = 1;
+        });
+
+        // Otro servidor ocupa el único sitio de esta IP.
+        RawRelayClient other = relay.Connect();
+        other.Request<RelayRegisteredMessage>(RawRelayClient.Register(RawRelayClient.Key(200)));
+
+        using var server = new TestServer(relayAddress: relay.RelayAddress);
+        Assert.True(TestRelay.WaitFor(() => LinkOf(server).State == RelayLinkState.Rejected, seconds: 3));
+        Assert.Equal(RelayErrorText.Describe(RelayError.TooManyServersFromIp, string.Empty), LinkOf(server).Error);
+
+        // Se libera el sitio: pasado RetryMax (1 s en las pruebas) lo vuelve a intentar y entra.
+        other.Dispose();
+        Assert.True(WaitRegistered(server, seconds: 4), "El servidor no volvió a intentarlo tras un rechazo pasajero");
+        Assert.Equal(string.Empty, LinkOf(server).Error);
     }
 
     [Fact]

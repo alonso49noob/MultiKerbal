@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Relay;
 using MultiKerbal.Common.Serialization;
 
 namespace MultiKerbal.Common.Net
@@ -112,6 +113,9 @@ namespace MultiKerbal.Common.Net
 
             /// <summary>Espera del resultado de entrar por el relay: más que su plazo de enganche (10 s).</summary>
             private const int RelayJoinTimeoutMs = 15000;
+
+            /// <summary>Límite de los textos de error que manda el relay (se muestran al jugador).</summary>
+            private const int MaxRelayErrorLength = 200;
 
             // Evita que Windows invalide el socket UDP al recibir un ICMP "puerto inalcanzable".
             private static readonly IOControlCode SioUdpConnReset = (IOControlCode)(-1744830452);
@@ -352,11 +356,15 @@ namespace MultiKerbal.Common.Net
                     }
 
                     if (!lookup.Found)
-                        return string.IsNullOrEmpty(lookup.Error) ? Lang.T("No se encontró el servidor", "Server not found") : lookup.Error;
+                    {
+                        string error = RelayErrorText.Describe(lookup.ErrorCode, ListedName.Sanitize(lookup.Error, MaxRelayErrorLength));
+                        return error.Length == 0 ? Lang.T("No se encontró el servidor", "Server not found") : error;
+                    }
 
                     if (lookup.GameProtocol != ProtocolInfo.Version)
                     {
-                        string version = string.IsNullOrEmpty(lookup.ModVersion) ? lookup.GameProtocol.ToString() : lookup.ModVersion;
+                        string modVersion = ListedName.Sanitize(lookup.ModVersion, ProtocolInfo.MaxListedVersionLength);
+                        string version = modVersion.Length == 0 ? lookup.GameProtocol.ToString() : modVersion;
                         return Lang.T($"Ese servidor usa otra versión de MultiKerbal ({version})", $"That server uses another version of MultiKerbal ({version})");
                     }
 
@@ -422,7 +430,10 @@ namespace MultiKerbal.Common.Net
                 WriteFrame(stream, new RelayJoinMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = _plan.JoinCode });
                 RelayJoinResultMessage result = ReadRelayReply<RelayJoinResultMessage>(stream);
                 if (!result.Ok)
-                    return string.IsNullOrEmpty(result.Error) ? Lang.T("El relay no pudo conectar con el servidor", "The relay could not reach the server") : result.Error;
+                {
+                    string error = RelayErrorText.Describe(result.ErrorCode, ListedName.Sanitize(result.Error, MaxRelayErrorLength));
+                    return error.Length == 0 ? Lang.T("El relay no pudo conectar con el servidor", "The relay could not reach the server") : error;
+                }
 
                 stream.ReadTimeout = Timeout.Infinite;
                 _viaRelay = true;

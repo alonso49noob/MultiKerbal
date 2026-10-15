@@ -64,5 +64,8 @@ namespace MultiKerbal.Common
 
         /// <summary>Los nombres de la lista pública se cortan a esta longitud.</summary>
         public const int MaxListedNameLength = 40;
+
+        /// <summary>Las versiones del mod que anuncian los servidores se cortan a esta longitud en el relay.</summary>
+        public const int MaxListedVersionLength = 32;
     }
 }

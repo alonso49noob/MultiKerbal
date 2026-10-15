@@ -260,7 +260,7 @@ internal static class SampleMessages
             Info = relayInfo,
         };
         yield return new RelayRegisteredMessage { Code = "K7MQ2P", UdpSecret = ulong.MaxValue - 11 };
-        yield return new RelayRejectedMessage { Reason = "Demasiados servidores desde esta dirección" };
+        yield return new RelayRejectedMessage { ErrorCode = RelayError.TooManyServersFromIp, Permanent = true, Reason = "Demasiados servidores desde esta dirección" };
         yield return new RelayHeartbeatMessage { Info = relayInfo };
         yield return new RelayReachabilityMessage { Tcp = true, Udp = false };
         yield return new RelayRecheckMessage();
@@ -279,10 +279,11 @@ internal static class SampleMessages
             ModVersion = "0.7.1",
             DirectHost = "198.51.100.20",
             DirectPort = 6750,
+            ErrorCode = RelayError.NoServer,
             Error = "ninguno",
         };
         yield return new RelayJoinMessage { RelayVersion = 1, Code = "K7MQ2P" };
-        yield return new RelayJoinResultMessage { Ok = true, Error = "sin error" };
+        yield return new RelayJoinResultMessage { Ok = true, ErrorCode = RelayError.ServerFull, Error = "sin error" };
         yield return new RelayListRequestMessage { RelayVersion = 1 };
         yield return new RelayListResponseMessage
         {
