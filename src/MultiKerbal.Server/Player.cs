@@ -17,6 +17,12 @@ internal sealed class Player
 
     public bool Authenticated { get; set; }
 
+    /// <summary>Ya se anotó "Conexión #N" en el registro (con su primer mensaje, si no era una consulta de Hospedar).</summary>
+    public bool Announced { get; set; }
+
+    /// <summary>La conexión era una consulta o una orden de Hospedar, ya contestada: se cierra sin dejar rastro en el registro.</summary>
+    public bool HostingRequest { get; set; }
+
     public PlayerInfo Info { get; set; } = new();
 
     public WarpVote Vote { get; set; }

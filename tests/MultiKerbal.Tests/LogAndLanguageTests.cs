@@ -5,6 +5,7 @@ using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Relay;
 using MultiKerbal.Relay;
+using MultiKerbal.Server;
 
 namespace MultiKerbal.Tests;
 
@@ -33,6 +34,18 @@ public sealed class LogAndLanguageTests
         public int Count(string text) => Lines.Count(l => l.Contains(text));
 
         public void Dispose() => RelayLog.Listener = null;
+    }
+
+    /// <summary>Recoge las líneas del registro del servidor mientras dura.</summary>
+    private sealed class ServerLines : IDisposable
+    {
+        public ServerLines() => Log.Listener = Lines.Enqueue;
+
+        public ConcurrentQueue<string> Lines { get; } = new();
+
+        public int Count(string text) => Lines.Count(l => l.Contains(text));
+
+        public void Dispose() => Log.Listener = null;
     }
 
     // --- Avisos del relay (I2) ---
@@ -115,6 +128,79 @@ public sealed class LogAndLanguageTests
         Assert.Contains("después de medianoche", second);
         Assert.DoesNotContain("antes de medianoche", second);
         Directory.Delete(directory, recursive: true);
+    }
+
+    // --- Registro del servidor (T9) ---
+
+    [Fact]
+    public void StatusQueriesAndControls_LeaveNoConnectionLines_ButPlayersDo()
+    {
+        using var lines = new ServerLines();
+        using var server = new TestServer();
+
+        for (int i = 0; i < 3; i++)
+            Assert.NotNull(ServerStatusQuery.Query("127.0.0.1", server.Port, 3000, out _));
+        Assert.True(ServerStatusQuery.SendControl("127.0.0.1", server.Port, ServerControlAction.SetPublic, 3000));
+        Assert.True(TestRelay.WaitFor(() => server.Host.Connections.Length == 0, seconds: 3));
+        Thread.Sleep(100); // el bucle principal procesa los cierres
+
+        Assert.Equal(0, lines.Count("Conexión #"));
+
+        server.Join("Jeb");
+        Assert.Equal(1, lines.Count("Conexión #"));
+        Assert.Equal(0, lines.Count("antes del saludo"));
+    }
+
+    [Fact]
+    public void ConnectionThatSkipsTheHandshake_IsStillLogged()
+    {
+        using var lines = new ServerLines();
+        using var server = new TestServer();
+
+        using TestClient rude = TestClient.Connect(server.Port);
+        rude.Send(new ChatMessage { Text = "hola sin saludar" });
+        rude.WaitForEvent(NetEventType.Disconnected);
+
+        // Se anota al llegar su primer mensaje y otra vez al cerrarse.
+        Assert.True(TestRelay.WaitFor(() => lines.Count("antes del saludo") == 1, seconds: 3));
+        Assert.Single(lines.Lines, l => l.Contains("Conexión #") && l.Contains(" desde "));
+    }
+
+    [Fact]
+    public void ForeignControlWarning_IsWrittenOncePerMinute()
+    {
+        using var lines = new ServerLines();
+        using var relay = new TestRelay(LongLived);
+        using var server = new TestServer(relayAddress: relay.RelayAddress, reachableDirectly: false);
+        string code = server.WaitForRelayCode();
+
+        for (int i = 0; i < 2; i++)
+        {
+            using TestClient client = TestClient.StartWithCode(relay.RelayAddress, code);
+            client.WaitForEvent(NetEventType.Connected);
+            Assert.True(client.Net.ViaRelay);
+            client.Send(new ServerControlMessage { Action = ServerControlAction.SetPublic });
+            client.WaitForEvent(NetEventType.Disconnected);
+        }
+
+        Assert.False(server.Host.Config.Public);
+        Assert.Equal(1, lines.Count("Orden del anfitrión ignorada"));
+    }
+
+    [Fact]
+    public void WarningLimiter_LetsOneThroughPerInterval_AndCountsTheRest()
+    {
+        DateTime now = new(2026, 1, 1);
+        var limiter = new WarningLimiter(TimeSpan.FromMinutes(1), () => now);
+
+        Assert.True(limiter.Allow(out int skipped));
+        Assert.Equal(0, skipped);
+        Assert.False(limiter.Allow(out _));
+        Assert.False(limiter.Allow(out _));
+
+        now = now.AddSeconds(61);
+        Assert.True(limiter.Allow(out skipped));
+        Assert.Equal(2, skipped);
     }
 
     // --- Textos del relay en el idioma de cada uno (N2) ---

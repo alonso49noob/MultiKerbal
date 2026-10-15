@@ -252,7 +252,18 @@ public sealed partial class ServerHost
 
     private void OnConnected(ClientConnection connection)
     {
+        // "Conexión #N" se anota con su primer mensaje: las consultas de Hospedar (cada 3 s) no llenan el registro.
         _players[connection.Id] = new Player(connection);
+    }
+
+    /// <summary>Anota la conexión en el registro, una sola vez, si aún no se había hecho.</summary>
+    private static void Announce(Player player)
+    {
+        if (player.Announced)
+            return;
+
+        player.Announced = true;
+        ClientConnection connection = player.Connection;
         Log.Info($"Conexión #{connection.Id} desde {connection.RemoteEndPoint}{(connection.RelaySessionId != 0 ? " (por el relay)" : string.Empty)}");
     }
 
@@ -263,7 +274,14 @@ public sealed partial class ServerHost
 
         if (!player.Authenticated)
         {
-            Log.Info($"Conexión #{connection.Id} cerrada antes del saludo: {reason}");
+            // Una consulta o una orden de Hospedar ya contestada no deja rastro.
+            if (player.HostingRequest)
+                return;
+
+            if (player.Announced)
+                Log.Info($"Conexión #{connection.Id} cerrada antes del saludo: {reason}");
+            else
+                Log.Info($"Conexión #{connection.Id} desde {connection.RemoteEndPoint}{(connection.RelaySessionId != 0 ? " (por el relay)" : string.Empty)} cerrada antes del saludo: {reason}");
             return;
         }
 
@@ -291,9 +309,20 @@ public sealed partial class ServerHost
         if (!player.Authenticated)
         {
             if (message is HandshakeRequestMessage handshake)
+            {
+                Announce(player);
                 OnHandshake(player, handshake);
-            else if (!TryAnswerHostingRequest(connection, message))
+            }
+            else if (TryAnswerHostingRequest(connection, message))
+            {
+                player.HostingRequest = true;
+            }
+            else
+            {
+                Announce(player);
                 _network.Kick(connection, "Se esperaba el saludo inicial");
+            }
+
             return;
         }
 

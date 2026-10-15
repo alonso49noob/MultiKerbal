@@ -172,6 +172,17 @@ public sealed class ServerStatusTests
     }
 
     [Fact]
+    public void SendControl_UnknownAction_GivesFalse_AndChangesNothing()
+    {
+        using var server = new TestServer();
+
+        Assert.False(ServerStatusQuery.SendControl("127.0.0.1", server.Port, (ServerControlAction)99, 3000));
+
+        Assert.False(server.Host.Config.Public);
+        Assert.True(TestRelay.WaitFor(() => server.Host.Connections.Length == 0, seconds: 3));
+    }
+
+    [Fact]
     public void SendControl_ToAClosedPort_GivesFalse()
     {
         Assert.False(ServerStatusQuery.SendControl("127.0.0.1", TestServer.ReserveFreePort(), ServerControlAction.SetPublic, 2000));

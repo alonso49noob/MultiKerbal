@@ -27,6 +27,14 @@ public sealed partial class ServerHost
 
     private bool _broadcastDirect;
 
+    /// <summary>
+    /// Las órdenes de Hospedar que llegan de fuera de este equipo (o desconocidas) las puede mandar cualquiera: su aviso se
+    /// escribe como mucho una vez por minuto. Hilo principal.
+    /// </summary>
+    private readonly WarningLimiter _foreignControlWarnings = new(TimeSpan.FromMinutes(1));
+
+    private readonly WarningLimiter _unknownControlWarnings = new(TimeSpan.FromMinutes(1));
+
     /// <summary>El enlace con el relay; null si está desactivado (para los tests).</summary>
     internal RelayLink? RelayLink => _relay;
 
@@ -177,13 +185,19 @@ public sealed partial class ServerHost
                 if (!connection.IsLoopback)
                 {
                     // Una conexión del relay sale del relay, no de este equipo: nadie de fuera manda aquí.
-                    Log.Warn($"Orden del anfitrión ignorada: la conexión #{connection.Id} no es de este equipo ({connection.RemoteEndPoint})");
+                    if (_foreignControlWarnings.Allow(out int skipped))
+                    {
+                        Log.Warn($"Orden del anfitrión ignorada: la conexión #{connection.Id} no es de este equipo ({connection.RemoteEndPoint})" +
+                                 (skipped > 0 ? $" (y {skipped} más en el último minuto)" : string.Empty));
+                    }
+
                     _network.Kick(connection, "Solo se acepta desde el propio equipo");
                     return true;
                 }
 
-                ApplyControl(control.Action);
-                _network.Send(connection, BuildStatus());
+                // Una orden desconocida no se contesta: así quien la mandó sabe que no se aplicó.
+                if (ApplyControl(control.Action))
+                    _network.Send(connection, BuildStatus());
                 _network.Kick(connection, "Orden del anfitrión");
                 return true;
 
@@ -192,23 +206,25 @@ public sealed partial class ServerHost
         }
     }
 
-    private void ApplyControl(ServerControlAction action)
+    /// <summary>Aplica una orden del anfitrión. False si no la conoce (no se ha hecho nada).</summary>
+    private bool ApplyControl(ServerControlAction action)
     {
         switch (action)
         {
             case ServerControlAction.Recheck:
                 _relay?.Recheck();
                 Log.Info("Anfitrión: se repite la comprobación de acceso");
-                break;
+                return true;
             case ServerControlAction.SetPublic:
                 SetPublic(true);
-                break;
+                return true;
             case ServerControlAction.SetPrivate:
                 SetPublic(false);
-                break;
+                return true;
             default:
-                Log.Warn($"Orden del anfitrión desconocida: {action}");
-                break;
+                if (_unknownControlWarnings.Allow(out int skipped))
+                    Log.Warn($"Orden del anfitrión desconocida: {action}{(skipped > 0 ? $" (y {skipped} más en el último minuto)" : string.Empty)}");
+                return false;
         }
     }
 

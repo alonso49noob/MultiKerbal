@@ -7,6 +7,9 @@ internal static class Log
 
     public static bool ConsoleEnabled { get; set; } = true;
 
+    /// <summary>Recibe cada línea escrita (para los tests).</summary>
+    internal static Action<string>? Listener { get; set; }
+
     public static void OpenFile(string path)
     {
         string fullPath = Path.GetFullPath(path);
@@ -49,6 +52,7 @@ internal static class Log
             }
 
             _file?.WriteLine(line);
+            Listener?.Invoke(line);
         }
     }
 }
