@@ -1,6 +1,7 @@
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Relay;
+using MultiKerbal.Server.Net;
 using MultiKerbal.Server.Relay;
 
 namespace MultiKerbal.Server;
@@ -17,6 +18,14 @@ public sealed partial class ServerHost
     private volatile RelayServerInfo _relayInfo = new();
 
     private string _lastRelayDescription = string.Empty;
+
+    /// <summary>
+    /// Último código y acceso directo vistos por el bucle principal (vacío mientras no hay código). Solo se difunde si
+    /// cambian, así que los latidos y las recomprobaciones que repiten el mismo resultado no avisan a nadie. Hilo principal.
+    /// </summary>
+    private string _broadcastCode = string.Empty;
+
+    private bool _broadcastDirect;
 
     /// <summary>El enlace con el relay; null si está desactivado (para los tests).</summary>
     internal RelayLink? RelayLink => _relay;
@@ -62,9 +71,11 @@ public sealed partial class ServerHost
             HasPassword = !string.IsNullOrEmpty(Config.Password),
             IsPublic = Config.Public,
             GameProtocol = ProtocolInfo.Version,
-            ModVersion = typeof(ServerHost).Assembly.GetName().Version?.ToString(3) ?? string.Empty,
+            ModVersion = ModVersion,
         };
     }
+
+    private static string ModVersion => typeof(ServerHost).Assembly.GetName().Version?.ToString(3) ?? string.Empty;
 
     private string DescribeRelay()
     {
@@ -86,14 +97,125 @@ public sealed partial class ServerHost
         }
     }
 
-    /// <summary>El enlace avisa de cada cambio; aquí se registra una vez cada estado distinto.</summary>
+    /// <summary>
+    /// El enlace avisa de cada cambio; aquí se registra una vez cada estado distinto y se avisa a los jugadores si
+    /// cambió el código o el acceso directo (no en cada vaivén del estado, para no inundarlos).
+    /// </summary>
     private void OnRelayChanged()
     {
         string description = DescribeRelay();
-        if (description == _lastRelayDescription)
+        if (description != _lastRelayDescription)
+        {
+            _lastRelayDescription = description;
+            Log.Info($"Relay: {description}");
+        }
+
+        if (!TryBuildServerCode(out ServerCodeMessage message))
+        {
+            // Sin código (conectando de nuevo, rechazado...): cuando vuelva a haberlo, se avisa aunque sea el mismo.
+            _broadcastCode = string.Empty;
+            _broadcastDirect = false;
+            return;
+        }
+
+        if (message.Code == _broadcastCode && message.Direct == _broadcastDirect)
             return;
 
-        _lastRelayDescription = description;
-        Log.Info($"Relay: {description}");
+        _broadcastCode = message.Code;
+        _broadcastDirect = message.Direct;
+        BroadcastReliable(message);
+    }
+
+    /// <summary>El código actual del servidor, tal como va por el cable (sin guion). Falso si no está registrado.</summary>
+    private bool TryBuildServerCode(out ServerCodeMessage message)
+    {
+        message = new ServerCodeMessage();
+        var (state, code, _, direct) = _relay?.Snapshot() ?? (RelayLinkState.Off, string.Empty, string.Empty, false);
+        if (state != RelayLinkState.Registered || code.Length == 0)
+            return false;
+
+        message.Code = code;
+        message.Direct = direct;
+        return true;
+    }
+
+    /// <summary>Estado actual del servidor para la consulta del anfitrión. Hilo principal.</summary>
+    private ServerStatusResponseMessage BuildStatus()
+    {
+        var (state, code, error, direct) = _relay?.Snapshot() ?? (RelayLinkState.Off, string.Empty, string.Empty, false);
+        return new ServerStatusResponseMessage
+        {
+            GameProtocol = ProtocolInfo.Version,
+            ModVersion = ModVersion,
+            Name = Config.ServerName,
+            Players = AuthenticatedPlayers().Count(),
+            MaxPlayers = Config.MaxPlayers,
+            HasPassword = !string.IsNullOrEmpty(Config.Password),
+            RelayState = state,
+            RelayError = error,
+            Code = code,
+            Direct = direct,
+            IsPublic = Config.Public,
+        };
+    }
+
+    /// <summary>
+    /// Mensajes que se contestan sin haber entrado a la partida: la consulta de estado (la puede hacer cualquiera) y las
+    /// órdenes del anfitrión (solo desde este mismo equipo). En los dos casos se contesta y se cierra, sin crear jugador.
+    /// Devuelve false si el mensaje no es de esos.
+    /// </summary>
+    private bool TryAnswerHostingRequest(ClientConnection connection, IMessage message)
+    {
+        switch (message)
+        {
+            case ServerStatusRequestMessage:
+                _network.Send(connection, BuildStatus());
+                _network.Kick(connection, "Consulta de estado");
+                return true;
+
+            case ServerControlMessage control:
+                if (!connection.IsLoopback)
+                {
+                    // Una conexión del relay sale del relay, no de este equipo: nadie de fuera manda aquí.
+                    Log.Warn($"Orden del anfitrión ignorada: la conexión #{connection.Id} no es de este equipo ({connection.RemoteEndPoint})");
+                    _network.Kick(connection, "Solo se acepta desde el propio equipo");
+                    return true;
+                }
+
+                ApplyControl(control.Action);
+                _network.Send(connection, BuildStatus());
+                _network.Kick(connection, "Orden del anfitrión");
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private void ApplyControl(ServerControlAction action)
+    {
+        switch (action)
+        {
+            case ServerControlAction.Recheck:
+                _relay?.Recheck();
+                Log.Info("Anfitrión: se repite la comprobación de acceso");
+                break;
+            case ServerControlAction.SetPublic:
+                SetPublic(true);
+                break;
+            case ServerControlAction.SetPrivate:
+                SetPublic(false);
+                break;
+            default:
+                Log.Warn($"Orden del anfitrión desconocida: {action}");
+                break;
+        }
+    }
+
+    /// <summary>Le dice a un jugador el código del servidor, si ya hay. Hilo principal.</summary>
+    private void SendServerCode(Player player)
+    {
+        if (TryBuildServerCode(out ServerCodeMessage message))
+            _network.Send(player.Connection, message);
     }
 }

@@ -141,6 +141,15 @@ public sealed partial class ServerHost
                 return;
         }
 
+        SetPublic(value);
+    }
+
+    /// <summary>
+    /// Cambia si el servidor sale en la lista pública: lo guarda en server.json (si se conoce su ruta) y avisa al relay
+    /// al momento. Lo usan la consola (<c>public on|off</c>) y la orden <c>SetPublic</c>/<c>SetPrivate</c> del anfitrión.
+    /// </summary>
+    private void SetPublic(bool value)
+    {
         Config.Public = value;
         UpdateRelayInfo();
         _relay?.HeartbeatNow();

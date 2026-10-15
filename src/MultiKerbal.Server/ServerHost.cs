@@ -292,7 +292,7 @@ public sealed partial class ServerHost
         {
             if (message is HandshakeRequestMessage handshake)
                 OnHandshake(player, handshake);
-            else
+            else if (!TryAnswerHostingRequest(connection, message))
                 _network.Kick(connection, "Se esperaba el saludo inicial");
             return;
         }
@@ -448,6 +448,7 @@ public sealed partial class ServerHost
         }
 
         SendVesselsTo(player);
+        SendServerCode(player);
         BroadcastReliable(new PlayerJoinedMessage { Player = player.Info }, except: player);
         SendSystemChat(Lang.T($"{player.Name} se ha unido a la partida", $"{player.Name} joined the game"));
 

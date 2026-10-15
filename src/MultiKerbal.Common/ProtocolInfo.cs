@@ -3,7 +3,7 @@ namespace MultiKerbal.Common
     public static class ProtocolInfo
     {
         /// <summary>Incrementar cada vez que cambie el formato de cualquier mensaje.</summary>
-        public const int Version = 5;
+        public const int Version = 6;
 
         public const int DefaultPort = 6750;
 
