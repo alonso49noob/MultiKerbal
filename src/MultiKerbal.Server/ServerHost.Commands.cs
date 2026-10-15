@@ -22,7 +22,7 @@ public sealed partial class ServerHost
         {
             case "help":
             case "ayuda":
-                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | account [delete <jugador>] | progress | relay | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
+                Log.Info("Comandos: list | vessels | owner <nave> <jugador|nadie> [privada|compartida|publica] | account [delete <jugador>] | progress | relay | public [on|off] | mods [jugador|set <jugador>] | warp | say <texto> | kick <jugador> [motivo] | time | save | stop");
                 break;
 
             case "vessels":
@@ -96,6 +96,12 @@ public sealed partial class ServerHost
                 Log.Info(DescribeRelay());
                 break;
 
+            case "public":
+            case "publico":
+            case "público":
+                PublicCommand(arguments);
+                break;
+
             case "stop":
             case "quit":
             case "exit":
@@ -105,6 +111,53 @@ public sealed partial class ServerHost
             default:
                 Log.Info($"Comando desconocido: {command}. Escribe 'help'.");
                 break;
+        }
+    }
+
+    /// <summary>
+    /// <c>public</c> dice si el servidor sale en la lista pública del relay; <c>public on</c> / <c>public off</c> lo
+    /// cambia, lo guarda en server.json (si se conoce su ruta) y avisa al relay al momento, sin esperar al latido.
+    /// </summary>
+    private void PublicCommand(string arguments)
+    {
+        string word = arguments.Trim().ToLowerInvariant();
+        bool value;
+        switch (word)
+        {
+            case "":
+                Log.Info(Config.Public ? "El servidor es público (sale en la lista del relay)" : "El servidor es privado (solo se entra con la IP o el código)");
+                return;
+            case "on":
+            case "si":
+            case "sí":
+                value = true;
+                break;
+            case "off":
+            case "no":
+                value = false;
+                break;
+            default:
+                Log.Info("Uso: public [on|off]");
+                return;
+        }
+
+        Config.Public = value;
+        UpdateRelayInfo();
+        _relay?.HeartbeatNow();
+        Log.Info(value ? "Servidor público: saldrá en la lista del relay" : "Servidor privado: ya no sale en la lista del relay");
+        if (value && _relay == null)
+            Log.Warn("El relay está desactivado (Relay en server.json): no saldrá en ninguna lista");
+
+        if (ConfigPath == null)
+            return;
+
+        try
+        {
+            Config.Save(ConfigPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Error($"No se pudo guardar {ConfigPath}: {ex.Message}. El cambio vale hasta que se pare el servidor");
         }
     }
 

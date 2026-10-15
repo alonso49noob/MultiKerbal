@@ -40,7 +40,7 @@ catch (Exception ex)
     return 1;
 }
 
-var host = new ServerHost(config);
+var host = new ServerHost(config) { ConfigPath = configPath };
 try
 {
     host.Start();

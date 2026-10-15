@@ -17,19 +17,36 @@ internal sealed class TestServer : IDisposable
     private readonly string _gameMode;
     private readonly string? _relayAddress;
     private readonly int? _announcedPort;
+    private readonly bool _isPublic;
+    private readonly string _serverName;
+    private readonly RelayLinkOptions _relayTimes;
 
     /// <param name="relayAddress">Dirección del relay (host:puerto). Sin ella el servidor no usa el relay, para que las pruebas no lleguen a Internet.</param>
     /// <param name="reachableDirectly">
     /// Con false, el servidor anuncia al relay un puerto cerrado: la comprobación de acceso falla y quien entra con
     /// el código pasa por el relay, aunque todo esté en este equipo.
     /// </param>
-    public TestServer(string modPolicy = "warn", string gameMode = "sandbox", string? relayAddress = null, bool reachableDirectly = true)
+    /// <param name="isPublic">Si el servidor sale en la lista pública del relay (<c>Public</c> de server.json).</param>
+    /// <param name="relayHeartbeat">Cada cuánto manda el latido al relay; los tests de "aparece enseguida" lo alargan para que solo valga el latido forzado.</param>
+    public TestServer(string modPolicy = "warn", string gameMode = "sandbox", string? relayAddress = null, bool reachableDirectly = true,
+        bool isPublic = false, string serverName = "Servidor de pruebas", TimeSpan? relayHeartbeat = null)
     {
         Log.ConsoleEnabled = false;
         _modPolicy = modPolicy;
         _gameMode = gameMode;
         _relayAddress = relayAddress;
         _announcedPort = reachableDirectly ? null : ReserveFreePort();
+        _isPublic = isPublic;
+        _serverName = serverName;
+        _relayTimes = relayHeartbeat == null
+            ? ShortRelayTimes
+            : new RelayLinkOptions
+            {
+                Heartbeat = relayHeartbeat.Value,
+                UdpHello = ShortRelayTimes.UdpHello,
+                RetryInitial = ShortRelayTimes.RetryInitial,
+                RetryMax = ShortRelayTimes.RetryMax,
+            };
         Host = StartHost();
     }
 
@@ -110,13 +127,14 @@ internal sealed class TestServer : IDisposable
         {
             Port = 0,
             DataDirectory = _dataDirectory,
-            ServerName = "Servidor de pruebas",
+            ServerName = _serverName,
+            Public = _isPublic,
             ModPolicy = _modPolicy,
             GameMode = _gameMode,
             Relay = _relayAddress != null,
             RelayAddress = _relayAddress ?? string.Empty,
             RelayAnnouncedPortOverride = _announcedPort,
-        }, ShortRelayTimes);
+        }, _relayTimes);
         host.Start();
         return host;
     }

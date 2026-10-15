@@ -58,7 +58,7 @@ public sealed partial class RelayHost
         {
             RelayServerInfo info = server.Info;
             TimeSpan age = DateTime.UtcNow - server.RegisteredAt;
-            RelayLog.Info($"  {ServerCode.Format(server.Code)} \"{info.Name}\" {info.Players}/{info.MaxPlayers} — {server.RemoteAddress}:{server.GamePort}, " +
+            RelayLog.Info($"  {ServerCode.Format(server.Code)} \"{ListedName.Sanitize(info.Name)}\" {info.Players}/{info.MaxPlayers} — {server.RemoteAddress}:{server.GamePort}, " +
                           $"{(info.IsPublic ? "público" : "privado")}, registrado hace {(int)age.TotalMinutes} min");
         }
     }

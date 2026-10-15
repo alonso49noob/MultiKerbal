@@ -39,6 +39,9 @@ internal sealed class RelayLink
     private string _error = string.Empty;
     private bool _direct;
 
+    /// <summary>Peticiones de mandar un latido ya (como mucho una pendiente).</summary>
+    private readonly SemaphoreSlim _beatNow = new(0, 1);
+
     /// <summary>Control registrado ahora mismo, para los mensajes que salen fuera de su tarea; null si no hay. Con <see cref="_sync"/>.</summary>
     private Control? _control;
 
@@ -141,6 +144,23 @@ internal sealed class RelayLink
             _state = RelayLinkState.Off;
             _code = string.Empty;
             _direct = false;
+        }
+    }
+
+    /// <summary>
+    /// Manda un latido sin esperar al siguiente (por ejemplo, porque cambió el estado público). No bloquea; si no hay
+    /// control registrado, el próximo latido ya llevará los datos nuevos. Varias peticiones seguidas hacen un solo latido.
+    /// </summary>
+    public void HeartbeatNow()
+    {
+        try
+        {
+            if (_beatNow.CurrentCount == 0)
+                _beatNow.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Otra petición llegó a la vez: ya hay una pendiente.
         }
     }
 
@@ -374,7 +394,8 @@ internal sealed class RelayLink
         {
             while (!session.IsCancellationRequested)
             {
-                await Task.Delay(_options.Heartbeat, session.Token);
+                // Cada intervalo, o antes si piden un latido ya (HeartbeatNow).
+                await _beatNow.WaitAsync(_options.Heartbeat, session.Token);
                 await WriteAsync(stream, writeLock, new RelayHeartbeatMessage { Info = _info() }, session.Token);
             }
         }

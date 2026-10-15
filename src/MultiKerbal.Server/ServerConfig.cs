@@ -85,6 +85,17 @@ public sealed class ServerConfig
         return created;
     }
 
+    /// <summary>
+    /// Guarda la configuración en <paramref name="path"/> con el mismo formato con el que se lee. Escribe un archivo
+    /// aparte y lo mueve encima, para que un fallo a medias no deje el server.json roto.
+    /// </summary>
+    public void Save(string path)
+    {
+        string temporary = path + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(this, JsonOptions));
+        File.Move(temporary, path, overwrite: true);
+    }
+
     public void Validate()
     {
         if (Port is < 0 or > 65535)

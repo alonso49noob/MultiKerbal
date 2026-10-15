@@ -273,8 +273,17 @@ public sealed partial class RelayHost
                     await _broker.AttachAsync(tcp, stream, remote, attach, ct);
                     break;
 
-                // La tarea 8 añade RelayListRequest (la lista pública). Hasta entonces, como cualquier otro primer
-                // mensaje, se cierra la conexión.
+                case RelayListRequestMessage listRequest:
+                    if (listRequest.RelayVersion != ProtocolInfo.RelayVersion)
+                    {
+                        // La respuesta no tiene campo de error: sin entender la petición, se cierra sin contestar.
+                        RelayLog.Warn($"Lista pedida desde {remote} con otra versión del relay ({listRequest.RelayVersion}): conexión cerrada");
+                        break;
+                    }
+
+                    await ReplyAndCloseAsync(tcp, stream, BuildListResponse(), ct);
+                    break;
+
                 case null:
                     break;
 
@@ -395,7 +404,7 @@ public sealed partial class RelayHost
             return null;
         }
 
-        RelayLog.Info($"[{ServerCode.Format(code)}] Servidor registrado: \"{info.Name}\" desde {remote}, puerto de juego {register.GamePort}");
+        RelayLog.Info($"[{ServerCode.Format(code)}] Servidor registrado: \"{ListedName.Sanitize(info.Name)}\" desde {remote}, puerto de juego {register.GamePort}");
         return session;
     }
 
@@ -442,6 +451,47 @@ public sealed partial class RelayHost
             DirectPort = direct ? server.GamePort : 0,
             Error = string.Empty,
         };
+    }
+
+    /// <summary>
+    /// La lista pública: solo servidores vivos que piden salir en ella, con el nombre saneado, ordenados por jugadores
+    /// (de más a menos) y luego por nombre (ordinal, sin distinguir mayúsculas), como mucho
+    /// <see cref="ProtocolInfo.MaxListedServers"/>. El código sale sin guion, como en el resto del protocolo.
+    /// </summary>
+    internal RelayListResponseMessage BuildListResponse()
+    {
+        ServerSession[] sessions;
+        lock (_registryLock)
+            sessions = _servers.Values.ToArray();
+
+        var entries = new List<PublicServerEntry>();
+        foreach (ServerSession session in sessions)
+        {
+            // Una sola lectura: nombre, jugadores y demás salen del mismo latido.
+            RelayServerInfo info = session.Info;
+            if (session.IsClosed || !info.IsPublic)
+                continue;
+
+            entries.Add(new PublicServerEntry
+            {
+                Code = session.Code,
+                Name = ListedName.Sanitize(info.Name),
+                Players = info.Players,
+                MaxPlayers = info.MaxPlayers,
+                HasPassword = info.HasPassword,
+                GameProtocol = info.GameProtocol,
+                ModVersion = info.ModVersion ?? string.Empty,
+                Direct = session.IsDirect,
+            });
+        }
+
+        PublicServerEntry[] sorted = entries
+            .OrderByDescending(e => e.Players)
+            .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.Code, StringComparer.Ordinal)
+            .Take(ProtocolInfo.MaxListedServers)
+            .ToArray();
+        return new RelayListResponseMessage { Servers = sorted };
     }
 
     private static RelayLookupResultMessage NotFound(string error) => new()

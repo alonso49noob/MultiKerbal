@@ -66,6 +66,12 @@ public sealed partial class ServerHost
 
     public ServerConfig Config { get; }
 
+    /// <summary>
+    /// Ruta de server.json, para guardar los cambios que se hacen desde la consola (<c>public on|off</c>).
+    /// Null si la configuración no viene de un archivo (los tests): entonces el cambio solo vale mientras corre.
+    /// </summary>
+    public string? ConfigPath { get; set; }
+
     public int Port => _network.Port;
 
     /// <summary>Conexiones abiertas ahora mismo (para los tests).</summary>
