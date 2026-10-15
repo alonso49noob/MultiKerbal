@@ -442,7 +442,7 @@ public sealed partial class RelayHost
         return new RelayLookupResultMessage
         {
             Found = true,
-            Name = info.Name ?? string.Empty,
+            Name = ListedName.Sanitize(info.Name),
             GameProtocol = info.GameProtocol,
             ModVersion = info.ModVersion ?? string.Empty,
 

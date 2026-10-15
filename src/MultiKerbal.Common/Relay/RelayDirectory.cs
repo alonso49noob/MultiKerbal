@@ -36,6 +36,7 @@ namespace MultiKerbal.Common.Relay
             TcpClient tcp = null;
             Timer deadline = null;
             PublicServerEntry[] servers;
+            var timedOut = new bool[1];
             try
             {
                 IPAddress address = Resolve(host);
@@ -43,7 +44,11 @@ namespace MultiKerbal.Common.Relay
 
                 // El plazo vale para todo: pasado ese tiempo se corta la conexión y lo que esté esperando falla.
                 TcpClient toClose = tcp;
-                deadline = new Timer(_ => CloseQuietly(toClose), null, timeoutMs, Timeout.Infinite);
+                deadline = new Timer(_ =>
+                {
+                    Volatile.Write(ref timedOut[0], true);
+                    CloseQuietly(toClose);
+                }, null, timeoutMs, Timeout.Infinite);
 
                 tcp.Connect(address, port);
                 NetworkStream stream = tcp.GetStream();
@@ -59,7 +64,14 @@ namespace MultiKerbal.Common.Relay
             catch (Exception ex) when (ex is IOException || ex is SocketException || ex is ObjectDisposedException
                                        || ex is ProtocolException || ex is InvalidOperationException)
             {
-                // Incluye la lectura cortada por el plazo (se cierra el socket mientras se espera).
+                // Si saltó el plazo, el socket se cerró mientras se esperaba: el texto de .NET ("objeto liberado") no dice nada.
+                if (Volatile.Read(ref timedOut[0]))
+                {
+                    throw new IOException(Lang.T(
+                        "El relay " + relayAddress + " no contestó a tiempo (" + timeoutMs + " ms)",
+                        "The relay " + relayAddress + " did not answer in time (" + timeoutMs + " ms)"), ex);
+                }
+
                 throw Unreachable(relayAddress, ex);
             }
             finally
@@ -76,6 +88,10 @@ namespace MultiKerbal.Common.Relay
                     "El relay cerró la conexión sin dar la lista. Puede que use otra versión: actualiza MultiKerbal.",
                     "The relay closed the connection without sending the list. It may use another version: update MultiKerbal."));
             }
+
+            // Aunque el relay ya los sanea, otro relay (o uno modificado) podría mandar nombres con saltos de línea o larguísimos.
+            foreach (PublicServerEntry server in servers)
+                server.Name = ListedName.Sanitize(server.Name);
 
             return servers;
         }

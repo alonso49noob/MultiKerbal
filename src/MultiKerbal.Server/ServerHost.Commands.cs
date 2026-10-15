@@ -153,9 +153,9 @@ public sealed partial class ServerHost
 
         try
         {
-            Config.Save(ConfigPath);
+            ServerConfig.SetPublicInFile(ConfigPath, value);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             Log.Error($"No se pudo guardar {ConfigPath}: {ex.Message}. El cambio vale hasta que se pare el servidor");
         }

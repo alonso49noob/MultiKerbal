@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -86,14 +87,119 @@ public sealed class ServerConfig
     }
 
     /// <summary>
-    /// Guarda la configuración en <paramref name="path"/> con el mismo formato con el que se lee. Escribe un archivo
-    /// aparte y lo mueve encima, para que un fallo a medias no deje el server.json roto.
+    /// Cambia SOLO la clave <c>Public</c> del server.json que ya existe, sin tocar nada más (ni los comentarios, ni el
+    /// orden, ni el resto de valores). Así no se guardan por error cosas que solo valen en esta ejecución: el
+    /// <c>--port</c> de la línea de comandos o el <c>Relay</c> que <see cref="Validate"/> apaga por una dirección mala.
+    /// Si el archivo no existe, se crea con solo <c>Public</c> (lo demás toma sus valores por defecto al cargarlo).
+    /// Se escribe un archivo aparte y se mueve encima, para que un fallo a medias no deje el server.json roto.
     /// </summary>
-    public void Save(string path)
+    /// <exception cref="InvalidDataException">El archivo no es un objeto JSON válido (no se toca).</exception>
+    public static void SetPublicInFile(string path, bool value)
     {
+        string literal = value ? "true" : "false";
+        byte[] edited;
+        if (File.Exists(path))
+            edited = ReplacePublic(File.ReadAllBytes(path), literal);
+        else
+            edited = new UTF8Encoding(false).GetBytes("{\n  \"Public\": " + literal + "\n}\n");
+
         string temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(this, JsonOptions));
-        File.Move(temporary, path, overwrite: true);
+        try
+        {
+            File.WriteAllBytes(temporary, edited);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch (Exception)
+            {
+                // Ya se informa del fallo original.
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>Devuelve el JSON con el valor de <c>Public</c> cambiado (o añadido al final del objeto si faltaba).</summary>
+    private static byte[] ReplacePublic(byte[] original, string literal)
+    {
+        // Utf8JsonReader no admite la marca de orden de bytes: se aparta y se vuelve a poner.
+        int bom = original.Length >= 3 && original[0] == 0xEF && original[1] == 0xBB && original[2] == 0xBF ? 3 : 0;
+        var options = new JsonReaderOptions { CommentHandling = JsonCommentHandling.Allow, AllowTrailingCommas = true };
+        var reader = new Utf8JsonReader(original.AsSpan(bom), isFinalBlock: true, new JsonReaderState(options));
+
+        int lastValueEnd = -1;   // dónde termina el último valor de primer nivel (o la "{")
+        bool seenProperty = false;
+        bool expectPublicValue = false;
+        try
+        {
+            while (reader.Read())
+            {
+                if (reader.CurrentDepth == 0 && reader.TokenType == JsonTokenType.StartObject)
+                {
+                    lastValueEnd = bom + (int)reader.BytesConsumed;
+                }
+                else if (reader.CurrentDepth == 0 && reader.TokenType == JsonTokenType.EndObject)
+                {
+                    break;
+                }
+                else if (reader.CurrentDepth == 0 && reader.TokenType != JsonTokenType.Comment)
+                {
+                    throw new InvalidDataException("server.json no es un objeto JSON");
+                }
+                else if (reader.CurrentDepth == 1 && reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    seenProperty = true;
+                    expectPublicValue = reader.ValueTextEquals("Public");
+                }
+                else if (reader.CurrentDepth == 1 && reader.TokenType is JsonTokenType.True or JsonTokenType.False && expectPublicValue)
+                {
+                    int start = bom + (int)reader.TokenStartIndex;
+                    int length = bom + (int)reader.BytesConsumed - start;
+                    return Splice(original, start, length, literal);
+                }
+                else if (reader.CurrentDepth == 1 && reader.TokenType != JsonTokenType.Comment)
+                {
+                    // Un valor de primer nivel que no es el de Public (o Public con un valor que no es bool).
+                    if (expectPublicValue)
+                        throw new InvalidDataException("\"Public\" de server.json no es true ni false");
+                    lastValueEnd = bom + (int)reader.BytesConsumed;
+                }
+                else if (reader.TokenType is JsonTokenType.EndObject or JsonTokenType.EndArray && reader.CurrentDepth == 1)
+                {
+                    // Cierra un objeto o lista de primer nivel: ahí termina ese valor.
+                    if (expectPublicValue)
+                        throw new InvalidDataException("\"Public\" de server.json no es true ni false");
+                    lastValueEnd = bom + (int)reader.BytesConsumed;
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("server.json no es un JSON válido: " + ex.Message, ex);
+        }
+
+        if (lastValueEnd < 0)
+            throw new InvalidDataException("server.json no es un objeto JSON");
+
+        string text = Encoding.UTF8.GetString(original);
+        string newline = text.Contains("\r\n") ? "\r\n" : "\n";
+        string insertion = (seenProperty ? "," : string.Empty) + newline + "  \"Public\": " + literal;
+        return Splice(original, lastValueEnd, 0, insertion);
+    }
+
+    private static byte[] Splice(byte[] original, int start, int length, string replacement)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(replacement);
+        var result = new byte[original.Length - length + bytes.Length];
+        Buffer.BlockCopy(original, 0, result, 0, start);
+        Buffer.BlockCopy(bytes, 0, result, start, bytes.Length);
+        Buffer.BlockCopy(original, start + length, result, start + bytes.Length, original.Length - start - length);
+        return result;
     }
 
     public void Validate()

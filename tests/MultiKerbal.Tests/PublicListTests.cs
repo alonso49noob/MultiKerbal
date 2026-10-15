@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Relay;
 using MultiKerbal.Relay;
 using MultiKerbal.Server;
@@ -168,15 +168,45 @@ public sealed class PublicListTests
             o.MaxServersPerIp = 1000;
         });
         int total = ProtocolInfo.MaxListedServers + 3;
-        for (int i = 0; i < total; i++)
-            RegisterRaw(relay.Connect(), i, "S" + i, players: i % 7);
-        Assert.Equal(total, relay.Host.LiveServerCount);
+        var clients = new List<RawRelayClient>();
+        try
+        {
+            for (int i = 0; i < total; i++)
+            {
+                RawRelayClient client = relay.Connect();
+                clients.Add(client);
+                RegisterRaw(client, i, "S" + i, players: i % 7);
+            }
 
-        PublicServerEntry[] entries = List(relay);
+            Assert.Equal(total, relay.Host.LiveServerCount);
 
-        Assert.Equal(ProtocolInfo.MaxListedServers, entries.Length);
-        Assert.Equal(6, entries[0].Players);
-        Assert.Equal(entries.Select(e => e.Players).OrderByDescending(p => p), entries.Select(e => e.Players));
+            PublicServerEntry[] entries = List(relay);
+
+            Assert.Equal(ProtocolInfo.MaxListedServers, entries.Length);
+            Assert.Equal(6, entries[0].Players);
+            Assert.Equal(entries.Select(e => e.Players).OrderByDescending(p => p), entries.Select(e => e.Players));
+        }
+        finally
+        {
+            foreach (RawRelayClient client in clients)
+                client.Dispose();
+        }
+    }
+
+    [Fact]
+    public void Lookup_ReplyName_IsSanitizedToo()
+    {
+        using var relay = new TestRelay(LongLived);
+        using RawRelayClient server = relay.Connect();
+        string code = RegisterRaw(server, 1, "Base\n<color=red>Lunar</color>" + new string('x', 500));
+
+        using RawRelayClient player = relay.Connect();
+        RelayLookupResultMessage result = player.Request<RelayLookupResultMessage>(
+            new RelayLookupMessage { RelayVersion = ProtocolInfo.RelayVersion, Code = code });
+
+        Assert.True(result.Found);
+        Assert.Equal("Base<color=red>Lunar</color>" + new string('x', 12), result.Name);
+        Assert.DoesNotContain(result.Name, ch => char.IsControl(ch));
     }
 
     [Fact]
@@ -249,9 +279,13 @@ public sealed class PublicListTests
             int port = ((IPEndPoint)silent.LocalEndpoint).Port;
             DateTime start = DateTime.UtcNow;
 
-            Assert.Throws<IOException>(() => RelayDirectory.List($"127.0.0.1:{port}", 500));
+            IOException error = Assert.Throws<IOException>(() => RelayDirectory.List($"127.0.0.1:{port}", 500));
 
             Assert.True(DateTime.UtcNow - start < TimeSpan.FromSeconds(3));
+
+            // Un mensaje propio del plazo, no el "objeto liberado" de .NET.
+            Assert.Contains("no contestó a tiempo", error.Message);
+            Assert.DoesNotContain("dispos", error.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -260,9 +294,63 @@ public sealed class PublicListTests
     }
 
     [Fact]
-    public void PublicCommand_SavesServerJson_WhenThereIsAPath()
+    public void Directory_SanitizesNamesFromTheRelay_EvenIfTheRelayDidNot()
     {
-        string path = Path.Combine(Path.GetTempPath(), "MultiKerbalTests", "server-" + Guid.NewGuid().ToString("N") + ".json");
+        var fake = new TcpListener(IPAddress.Loopback, 0);
+        fake.Start();
+        try
+        {
+            int port = ((IPEndPoint)fake.LocalEndpoint).Port;
+            Task serving = Task.Run(() =>
+            {
+                using TcpClient client = fake.AcceptTcpClient();
+                var header = new byte[FrameCodec.TcpHeaderSize];
+                FrameCodec.ReadTcpFrame(client.GetStream(), header, out _);
+                byte[] reply = FrameCodec.EncodeTcp(new RelayListResponseMessage
+                {
+                    Servers = new[]
+                    {
+                        new PublicServerEntry { Code = "K7MQ2P", Name = "Falso\n[12:00:00] " + new string('y', 300), ModVersion = "1" },
+                    },
+                });
+                client.GetStream().Write(reply, 0, reply.Length);
+            });
+
+            PublicServerEntry entry = Assert.Single(RelayDirectory.List($"127.0.0.1:{port}", 2000));
+
+            Assert.Equal(ProtocolInfo.MaxListedNameLength, entry.Name.Length);
+            Assert.StartsWith("Falso[12:00:00] y", entry.Name);
+            Assert.True(TestRelay.WaitFor(() => serving.IsCompleted, seconds: 2));
+        }
+        finally
+        {
+            fake.Stop();
+        }
+    }
+
+    private static string ReadText(string path)
+    {
+        // El servidor reemplaza el archivo moviendo uno temporal: durante el cambio la lectura puede fallar un instante.
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string TempJson() => Path.Combine(Path.GetTempPath(), "MultiKerbalTests", "server-" + Guid.NewGuid().ToString("N") + ".json");
+
+    [Fact]
+    public void PublicCommand_WithAPath_CreatesServerJson_AndSwitchesPublic()
+    {
+        string path = TempJson();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         try
         {
@@ -272,16 +360,132 @@ public sealed class PublicListTests
 
             server.Host.EnqueueCommand("public on");
 
-            Assert.True(TestRelay.WaitFor(() => File.Exists(path) && File.ReadAllText(path).Contains("\"Public\": true")), "No se guardó server.json");
+            Assert.True(TestRelay.WaitFor(() => ReadText(path).Contains("\"Public\": true")), "No se guardó server.json");
             Assert.True(server.Host.Config.Public);
             Assert.True(ServerConfig.LoadOrCreate(path).Public);
 
             server.Host.EnqueueCommand("public off");
 
-            Assert.True(TestRelay.WaitFor(() => File.ReadAllText(path).Contains("\"Public\": false")));
+            Assert.True(TestRelay.WaitFor(() => ReadText(path).Contains("\"Public\": false")));
             Assert.False(ServerConfig.LoadOrCreate(path).Public);
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
-            Assert.Equal("Servidor de pruebas", document.RootElement.GetProperty("ServerName").GetString());
+            Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void PublicCommand_ChangesOnlyPublic_NotOverridesNorValidateSideEffects_AndKeepsComments()
+    {
+        string path = TempJson();
+        string dataDirectory = Path.Combine(Path.GetTempPath(), "MultiKerbalTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, string.Join("\n",
+            "{",
+            "  // Mi servidor de la pandilla",
+            "  \"ServerName\": \"Pandilla\",",
+            "  \"Port\": 6751,",
+            "  \"Relay\": true,",
+            "  \"RelayAddress\": \"direccion mala:xx\", // sin arreglar todavía",
+            "  \"Public\": false,",
+            "  \"Motd\": \"Hola\",",
+            "}",
+            string.Empty));
+        ServerHost? host = null;
+        try
+        {
+            ServerConfig config = ServerConfig.LoadOrCreate(path);
+            config.Port = 0;                                  // como --port en la línea de comandos
+            config.DataDirectory = dataDirectory;
+            Assert.False(config.Relay);                       // Validate la apagó por la dirección mala
+            host = new ServerHost(config) { ConfigPath = path };
+            host.Start();
+
+            host.EnqueueCommand("public on");
+
+            Assert.True(TestRelay.WaitFor(() => ReadText(path).Contains("\"Public\": true")), "No se guardó server.json");
+            string text = ReadText(path);
+            Assert.Contains("// Mi servidor de la pandilla", text);
+            Assert.Contains("// sin arreglar todavía", text);
+            Assert.Contains("\"Port\": 6751", text);
+            Assert.Contains("\"Relay\": true", text);
+            Assert.Contains("\"RelayAddress\": \"direccion mala:xx\"", text);
+            Assert.Contains("\"Motd\": \"Hola\"", text);
+            Assert.DoesNotContain("\"Port\": 0", text);
+            Assert.DoesNotContain("\"Relay\": false", text);
+            Assert.False(File.Exists(path + ".tmp"));
+
+            // El archivo sigue siendo el de antes: al cargarlo otra vez, el puerto y el relay son los suyos.
+            ServerConfig reloaded = ServerConfig.LoadOrCreate(path);
+            Assert.True(reloaded.Public);
+            Assert.Equal(6751, reloaded.Port);
+            Assert.Equal("Pandilla", reloaded.ServerName);
+        }
+        finally
+        {
+            host?.Stop();
+            File.Delete(path);
+            try
+            {
+                Directory.Delete(dataDirectory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("{}", true)]
+    [InlineData("{ }", false)]
+    [InlineData("{ \"Port\": 1 }", true)]
+    [InlineData("{ \"Port\": 1, }", true)]
+    [InlineData("{ \"Port\": 1, /* nota */ \"Public\": true }", false)]
+    [InlineData("{ \"Cosas\": { \"Public\": false }, \"Lista\": [1, 2] }", true)]
+    [InlineData("﻿{ \"Public\": false }", true)]
+    public void SetPublicInFile_EditsOrAddsOnlyTheKey(string original, bool value)
+    {
+        string path = TempJson();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, original);
+        try
+        {
+            ServerConfig.SetPublicInFile(path, value);
+
+            string text = File.ReadAllText(path);
+            ServerConfig loaded = ServerConfig.LoadOrCreate(path);
+            Assert.Equal(value, loaded.Public);
+            if (original.Contains("/* nota */"))
+                Assert.Contains("/* nota */", text);
+            if (original.Contains("\"Cosas\""))
+                Assert.Contains("\"Cosas\": { \"Public\": false }", text);
+            if (original.Contains("\"Port\": 1"))
+                Assert.Equal(1, loaded.Port);
+            Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("esto no es json")]
+    [InlineData("[1, 2]")]
+    [InlineData("{ \"Public\": \"si\" }")]
+    public void SetPublicInFile_WithABrokenFile_FailsAndLeavesItUntouched(string original)
+    {
+        string path = TempJson();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, original);
+        try
+        {
+            Assert.Throws<InvalidDataException>(() => ServerConfig.SetPublicInFile(path, true));
+
+            Assert.Equal(original, File.ReadAllText(path));
+            Assert.False(File.Exists(path + ".tmp"));
         }
         finally
         {
