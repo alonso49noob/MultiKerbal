@@ -42,7 +42,7 @@ public sealed partial class RelayHost
     internal RelayHost(RelayOptions options)
     {
         _options = options;
-        _forwarder = new UdpForwarder(FindServer, FindServerBySecret);
+        _forwarder = new UdpForwarder(FindServerBySecret);
         _broker = new SessionBroker(options, FindServer, _forwarder);
         _prober = new ReachabilityProber(options);
     }
@@ -413,7 +413,6 @@ public sealed partial class RelayHost
         }
 
         session.Close();
-        _forwarder.ForgetServer(session);
         if (removed && !_stopping)
         {
             bool expired = DateTime.UtcNow - session.LastSeen >= _options.HeartbeatTimeout;

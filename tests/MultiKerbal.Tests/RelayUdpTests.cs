@@ -143,6 +143,7 @@ public sealed class RelayUdpTests
         Assert.True(SendUntilReceived(serverUdp, down, relayUdp, playerUdp, down), "La respuesta del servidor no llegó al jugador");
 
         // A intenta dar una ficha para una sesión que no es suya: el relay no le hace caso.
+        Drain(serverUdp);
         const ulong stolen = 0x0102030405060708;
         controlA.Send(new RelayUdpTokenMessage { SessionId = incoming.SessionId, Token = stolen });
         Assert.False(SendUntilReceived(playerUdp, FrameCodec.EncodeUdp(new UdpBindMessage(), stolen), relayUdp, serverUdp, null, seconds: 0.5));
@@ -150,7 +151,53 @@ public sealed class RelayUdpTests
         // Al cerrarse la sesión, el relay olvida la ficha.
         player.Dispose();
         Assert.True(TestRelay.WaitFor(() => relay.Host.RelaySessionCount == 0, seconds: 3));
+        Drain(serverUdp);
         Assert.False(SendUntilReceived(playerUdp, up, relayUdp, serverUdp, null, seconds: 0.5));
+    }
+
+    [Fact]
+    public void ServerControlDropsAndComesBack_WhileAPlayerThroughTheRelayKeepsItsUdp()
+    {
+        // Las sesiones de los jugadores siguen vivas aunque se caiga el control del servidor. Los datagramas que el
+        // servidor manda mientras tanto no pueden tomarse por los del jugador (si no, al volver, el relay le
+        // mandaría al propio servidor todo lo que es para el jugador).
+        using var relay = new TestRelay(LongLived);
+        using var server = new TestServer(relayAddress: relay.RelayAddress, reachableDirectly: false);
+        TestClient jeb = JoinThroughRelayWithUdp(relay, server, "Jeb");
+        TestClient bill = server.Join("Bill");
+        jeb.Send(Proto(VesselId));
+        bill.WaitFor<VesselProtoMessage>(m => m.VesselId == VesselId);
+        bill.Send(Proto(OtherVesselId));
+        jeb.WaitFor<VesselProtoMessage>(m => m.VesselId == OtherVesselId);
+        SendUnreliableUntilReceived(bill, jeb, Update(OtherVesselId, 10));
+        string code = server.WaitForRelayCode();
+        Assert.True(relay.Host.TryGetServer(code, out ServerSession? before));
+
+        // El relay corta el control; el servidor se vuelve a registrar solo. Mientras tanto Bill sigue pilotando,
+        // así que el servidor sigue mandando a Jeb por UDP (a través del relay).
+        before.Close();
+        double ut = 11;
+        Assert.True(TestRelay.WaitFor(() =>
+        {
+            bill.Send(Update(OtherVesselId, ut++), Delivery.Unreliable);
+            return relay.Host.TryGetServer(code, out ServerSession? again) && again != before && again.UdpEndPoint != null;
+        }, seconds: 4), "El servidor no volvió a registrarse");
+        Assert.Equal(1, relay.Host.RelaySessionCount);
+
+        // Sin que Jeb mande nada por UDP, lo que el servidor le manda le sigue llegando, y al revés también.
+        SendUnreliableUntilReceived(bill, jeb, Update(OtherVesselId, 1000));
+        SendUnreliableUntilReceived(jeb, bill, Update(VesselId, 1000));
+    }
+
+    /// <summary>Descarta lo que haya llegado ya (por ejemplo, copias de los reintentos anteriores).</summary>
+    private static void Drain(UdpClient udp)
+    {
+        Thread.Sleep(100);
+        while (udp.Available > 0)
+        {
+            IPEndPoint? sender = null;
+            udp.Receive(ref sender);
+        }
     }
 
     /// <summary>Socket UDP en loopback que no se rompe con los avisos ICMP de "puerto inalcanzable" (Windows).</summary>

@@ -23,8 +23,9 @@ internal sealed class ServerSession
     private int _isClosed;
     private volatile RelayServerInfo _info;
     private volatile EndPoint? _udpEndPoint;
-    private volatile bool _directTcp;
-    private volatile bool _directUdp;
+
+    /// <summary>Resultado de la última comprobación, los dos a la vez (nunca uno nuevo con otro viejo).</summary>
+    private volatile Reachability _reachability = new(false, false);
 
     public ServerSession(TcpClient tcp, string code, ulong udpSecret, RelayServerInfo info, int gamePort, IPAddress remoteAddress, TimeSpan heartbeatTimeout)
     {
@@ -64,21 +65,27 @@ internal sealed class ServerSession
     }
 
     /// <summary>La última comprobación pudo abrir una TCP al puerto de juego.</summary>
-    public bool DirectTcp
-    {
-        get => _directTcp;
-        set => _directTcp = value;
-    }
+    public bool DirectTcp => _reachability.Tcp;
 
     /// <summary>La última comprobación recibió respuesta por UDP desde el socket de comprobaciones.</summary>
-    public bool DirectUdp
+    public bool DirectUdp => _reachability.Udp;
+
+    /// <summary>Se puede entrar sin pasar por el relay: funcionan la TCP y el UDP (de la misma comprobación).</summary>
+    public bool IsDirect
     {
-        get => _directUdp;
-        set => _directUdp = value;
+        get
+        {
+            Reachability reachability = _reachability;
+            return reachability.Tcp && reachability.Udp;
+        }
     }
 
-    /// <summary>Se puede entrar sin pasar por el relay: funcionan la TCP y el UDP.</summary>
-    public bool IsDirect => _directTcp && _directUdp;
+    /// <summary>Apunta el resultado de una comprobación. Devuelve true si ha cambiado.</summary>
+    public bool SetReachability(bool tcp, bool udp)
+    {
+        var next = new Reachability(tcp, udp);
+        return Interlocked.Exchange(ref _reachability, next) != next;
+    }
 
     /// <summary>Se cancela al cerrar la sesión.</summary>
     public CancellationToken ClosedToken => _closed.Token;
@@ -203,4 +210,6 @@ internal sealed class ServerSession
     }
 
     private void Touch() => Interlocked.Exchange(ref _lastSeenTicks, DateTime.UtcNow.Ticks);
+
+    private sealed record Reachability(bool Tcp, bool Udp);
 }

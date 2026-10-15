@@ -246,15 +246,15 @@ internal sealed class RelayLink
         }
 
         ulong udpSecret;
+        string code;
         switch (reply)
         {
             case RelayRegisteredMessage registered:
-                if (!ServerCode.TryNormalize(registered.Code ?? string.Empty, out string code))
+                if (!ServerCode.TryNormalize(registered.Code ?? string.Empty, out code))
                     throw new ProtocolException("El relay mandó un código inválido");
 
                 udpSecret = registered.UdpSecret;
                 _registeredThisConnection = true;
-                SetState(RelayLinkState.Registered, code, string.Empty);
                 break;
 
             case RelayRejectedMessage rejected:
@@ -273,14 +273,16 @@ internal sealed class RelayLink
         }
 
         // Registrado: los latidos y el hola UDP salen por su cuenta y esta tarea lee el control. Si falla cualquiera
-        // de las dos primeras, se cancela todo y se cierra la conexión.
+        // de las tres, se cancela todo y se cierra la conexión. El control queda a mano antes de anunciar el registro,
+        // para que un Recheck u OnUdpToken justo después no se pierdan.
         using var session = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var control = new Control(stream, writeLock, session);
         lock (_sync)
             _control = control;
+        SetState(RelayLinkState.Registered, code, string.Empty);
 
         Task heartbeats = HeartbeatLoopAsync(stream, writeLock, session);
-        Task hellos = UdpHelloLoopAsync(RelayUdpEndPoint(tcp), udpSecret, session.Token);
+        Task hellos = UdpHelloLoopAsync(RelayUdpEndPoint(tcp), udpSecret, session);
         try
         {
             await ReadLoopAsync(stream, session.Token);
@@ -312,19 +314,25 @@ internal sealed class RelayLink
     /// Manda el hola UDP desde el socket de juego nada más registrarse y luego cada <see cref="RelayLinkOptions.UdpHello"/>:
     /// así el relay sabe por qué dirección le llega el UDP del servidor, y el router de casa deja pasar las respuestas.
     /// </summary>
-    private async Task UdpHelloLoopAsync(IPEndPoint relay, ulong secret, CancellationToken ct)
+    private async Task UdpHelloLoopAsync(IPEndPoint relay, ulong secret, CancellationTokenSource session)
     {
-        byte[] hello = FrameCodec.EncodeUdp(new RelayUdpHelloMessage { UdpSecret = secret }, 0);
         try
         {
-            while (!ct.IsCancellationRequested)
+            byte[] hello = FrameCodec.EncodeUdp(new RelayUdpHelloMessage { UdpSecret = secret }, 0);
+            while (!session.IsCancellationRequested)
             {
                 _network.SendRawUdp(hello, relay);
-                await Task.Delay(_options.UdpHello, ct);
+                await Task.Delay(_options.UdpHello, session.Token);
             }
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (Exception ex)
+        {
+            // Como con el latido: sin hola el UDP de los jugadores por el relay no funciona, así que se reconecta.
+            Log.Error($"Error inesperado al mandar el hola UDP al relay: {ex}");
+            session.Cancel();
         }
     }
 

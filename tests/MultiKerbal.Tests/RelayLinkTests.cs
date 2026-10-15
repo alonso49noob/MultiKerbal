@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using MultiKerbal.Common;
@@ -5,6 +6,7 @@ using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Relay;
 using MultiKerbal.Relay;
 using MultiKerbal.Server;
+using MultiKerbal.Server.Net;
 using MultiKerbal.Server.Relay;
 
 namespace MultiKerbal.Tests;
@@ -153,6 +155,10 @@ public sealed class RelayLinkTests
     {
         using var relay = new TestRelay(LongLived);
         string dir = Path.Combine(Path.GetTempPath(), "MultiKerbalTests", "link-" + Guid.NewGuid().ToString("N"));
+
+        // Una red de juego de verdad (sin bucle principal): el enlace manda por ella su hola UDP.
+        var network = new NetworkServer(new ConcurrentQueue<ServerEvent>(), new ServerClock());
+        network.Start(0);
         try
         {
             var states = new List<RelayLinkState>();
@@ -160,9 +166,9 @@ public sealed class RelayLinkTests
             link = new RelayLink(
                 relay.RelayAddress,
                 RelayKey.LoadOrCreate(dir),
-                gamePort: 6750,
+                gamePort: network.Port,
                 () => new RelayServerInfo { Name = "x", MaxPlayers = 8, GameProtocol = ProtocolInfo.Version, ModVersion = "0" },
-                network: null!,
+                network,
                 changed: () =>
                 {
                     lock (states)
@@ -192,6 +198,7 @@ public sealed class RelayLinkTests
         }
         finally
         {
+            network.Stop();
             try
             {
                 Directory.Delete(dir, recursive: true);

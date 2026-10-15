@@ -17,25 +17,32 @@ namespace MultiKerbal.Relay;
 /// última, por si su router le cambia el puerto) y va a la dirección UDP del servidor.</item>
 /// </list>
 /// Todo lo demás se descarta en silencio. Los bytes cuentan para el tope de tráfico de la sesión.
+/// <para>
+/// La dirección UDP de cada servidor se guarda por su código y no se olvida cuando se cae su control: las sesiones
+/// de sus jugadores siguen vivas (cada una tiene su propia TCP) y su UDP debe seguir pasando mientras el servidor
+/// vuelve a registrarse. Solo la sustituye un hola nuevo del mismo código. Así la dirección de un servidor nunca
+/// puede tomarse por la de un jugador.
+/// </para>
 /// </summary>
 internal sealed class UdpForwarder
 {
-    private readonly Func<string, ServerSession?> _findServer;
     private readonly Func<ulong, ServerSession?> _findServerBySecret;
 
     /// <summary>Rutas de las sesiones por su ficha.</summary>
     private readonly ConcurrentDictionary<ulong, UdpRoute> _routes = new();
 
-    /// <summary>Servidores por la dirección de su hola UDP.</summary>
-    private readonly ConcurrentDictionary<EndPoint, ServerSession> _serversByEndPoint = new();
+    /// <summary>Dirección del último hola de cada servidor, por su código. Se cambia con <see cref="_serversLock"/>.</summary>
+    private readonly ConcurrentDictionary<string, EndPoint> _endPointByCode = new();
 
-    /// <param name="findServer">Servidor vivo por su código (sin guion); null si no hay.</param>
-    /// <param name="findServerBySecret">Servidor vivo por su secreto UDP; null si no hay.</param>
+    /// <summary>Lo contrario: código del servidor de cada dirección. Se cambia con <see cref="_serversLock"/>.</summary>
+    private readonly ConcurrentDictionary<EndPoint, string> _codeByEndPoint = new();
+
+    private readonly object _serversLock = new();
     private Socket? _socket;
 
-    public UdpForwarder(Func<string, ServerSession?> findServer, Func<ulong, ServerSession?> findServerBySecret)
+    /// <param name="findServerBySecret">Servidor vivo por su secreto UDP; null si no hay.</param>
+    public UdpForwarder(Func<ulong, ServerSession?> findServerBySecret)
     {
-        _findServer = findServer;
         _findServerBySecret = findServerBySecret;
     }
 
@@ -51,13 +58,6 @@ internal sealed class UdpForwarder
 
     /// <summary>Olvida la ficha (solo si sigue siendo de esa ruta).</summary>
     public void Remove(ulong token, UdpRoute route) => _routes.TryRemove(new KeyValuePair<ulong, UdpRoute>(token, route));
-
-    /// <summary>Olvida la dirección UDP de un servidor que se ha ido.</summary>
-    public void ForgetServer(ServerSession server)
-    {
-        if (server.UdpEndPoint is { } endPoint)
-            _serversByEndPoint.TryRemove(new KeyValuePair<EndPoint, ServerSession>(endPoint, server));
-    }
 
     private async Task ReceiveLoopAsync(Socket socket, CancellationToken ct)
     {
@@ -108,10 +108,11 @@ internal sealed class UdpForwarder
             return;
         }
 
-        if (_serversByEndPoint.TryGetValue(sender, out ServerSession? fromServer) && !fromServer.IsClosed)
+        if (_codeByEndPoint.TryGetValue(sender, out string? fromServer))
         {
             // Del servidor al jugador: solo con fichas de sus propias sesiones y si el jugador ya ha dado señales.
-            if (_routes.TryGetValue(token, out UdpRoute? down) && down.ServerCode == fromServer.Code
+            // Nunca sigue más abajo: la dirección de un servidor no puede apuntarse como la de un jugador.
+            if (_routes.TryGetValue(token, out UdpRoute? down) && down.ServerCode == fromServer
                 && down.Player is { } player && down.Down.Reserve(count) == TimeSpan.Zero)
             {
                 Send(buffer, count, player);
@@ -124,26 +125,45 @@ internal sealed class UdpForwarder
             return;
 
         route.Player = sender;
-        if (_findServer(route.ServerCode)?.UdpEndPoint is { } server && route.Up.Reserve(count) == TimeSpan.Zero)
+        if (_endPointByCode.TryGetValue(route.ServerCode, out EndPoint? server) && route.Up.Reserve(count) == TimeSpan.Zero)
             Send(buffer, count, server);
     }
 
-    /// <summary>Un hola UDP con el secreto de un servidor vivo apunta desde dónde le llega su UDP.</summary>
+    /// <summary>
+    /// Un hola UDP con el secreto de un servidor vivo, y que sale de la misma IP que su control, apunta desde dónde
+    /// llega el UDP de ese servidor.
+    /// </summary>
     private void HandleHello(byte[] buffer, int count, EndPoint sender)
     {
-        if (!FrameCodec.TryDecodeUdp(buffer, count, out _, out IMessage? message)
+        if (sender is not IPEndPoint senderIp
+            || !FrameCodec.TryDecodeUdp(buffer, count, out _, out IMessage? message)
             || message is not RelayUdpHelloMessage { UdpSecret: not 0 } hello
             || _findServerBySecret(hello.UdpSecret) is not { } server)
         {
             return;
         }
 
-        EndPoint? previous = server.UdpEndPoint;
-        if (previous != null && !previous.Equals(sender))
-            _serversByEndPoint.TryRemove(new KeyValuePair<EndPoint, ServerSession>(previous, server));
+        IPAddress address = senderIp.Address.IsIPv4MappedToIPv6 ? senderIp.Address.MapToIPv4() : senderIp.Address;
+        if (!address.Equals(server.RemoteAddress))
+            return;
 
         server.UdpEndPoint = sender;
-        _serversByEndPoint[sender] = server;
+        lock (_serversLock)
+        {
+            if (_endPointByCode.TryGetValue(server.Code, out EndPoint? previous))
+            {
+                if (previous.Equals(sender))
+                    return;
+                _codeByEndPoint.TryRemove(new KeyValuePair<EndPoint, string>(previous, server.Code));
+            }
+
+            // Si esa dirección era de otro servidor (su router la ha reasignado), deja de serlo.
+            if (_codeByEndPoint.TryGetValue(sender, out string? other))
+                _endPointByCode.TryRemove(new KeyValuePair<string, EndPoint>(other, sender));
+
+            _endPointByCode[server.Code] = sender;
+            _codeByEndPoint[sender] = server.Code;
+        }
     }
 
     private void Send(byte[] buffer, int count, EndPoint target)

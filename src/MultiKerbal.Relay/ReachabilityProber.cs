@@ -51,17 +51,22 @@ internal sealed class ReachabilityProber
             bool first = true;
             while (!watch.IsCancellationRequested)
             {
-                await ProbeAsync(session, first, watch.Token);
-                first = false;
+                try
+                {
+                    await ProbeAsync(session, first, watch.Token);
+                    first = false;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Un fallo inesperado no debe dejar al servidor sin más comprobaciones: se anota y se sigue.
+                    RelayLog.Error($"[{ServerCode.Format(session.Code)}] Error inesperado en la comprobación de acceso: {ex}");
+                }
+
                 await session.WaitForRecheckAsync(_options.RecheckInterval, watch.Token);
             }
         }
         catch (OperationCanceledException)
         {
-        }
-        catch (Exception ex)
-        {
-            RelayLog.Error($"[{ServerCode.Format(session.Code)}] Error inesperado en la comprobación de acceso: {ex}");
         }
     }
 
@@ -75,10 +80,8 @@ internal sealed class ReachabilityProber
             bool[] results = await Task.WhenAll(tcp, udp);
             ct.ThrowIfCancellationRequested();
 
-            bool changed = first || session.DirectTcp != results[0] || session.DirectUdp != results[1];
-            session.DirectTcp = results[0];
-            session.DirectUdp = results[1];
-            if (changed)
+            bool changed = session.SetReachability(results[0], results[1]);
+            if (first || changed)
             {
                 RelayLog.Info($"[{ServerCode.Format(session.Code)}] Acceso directo: TCP {(results[0] ? "sí" : "no")}, " +
                               $"UDP {(results[1] ? "sí" : "no")} ({target})");

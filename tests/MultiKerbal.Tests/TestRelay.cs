@@ -144,12 +144,16 @@ internal sealed class RawRelayClient : IDisposable
         return new RawRelayClient(tcp);
     }
 
-    public static RelayRegisterMessage Register(byte[] key, string name = "Servidor de pruebas", int gamePort = 6750) =>
+    /// <param name="gamePort">
+    /// Puerto de juego anunciado. Por defecto, uno libre en el que no escucha nadie: el relay lo comprueba, y en el
+    /// equipo de pruebas puede haber un servidor de verdad en el puerto normal (6750).
+    /// </param>
+    public static RelayRegisterMessage Register(byte[] key, string name = "Servidor de pruebas", int? gamePort = null) =>
         new()
         {
             RelayVersion = ProtocolInfo.RelayVersion,
             Key = key,
-            GamePort = gamePort,
+            GamePort = gamePort ?? TestServer.ReserveFreePort(),
             Info = new RelayServerInfo
             {
                 Name = name,
