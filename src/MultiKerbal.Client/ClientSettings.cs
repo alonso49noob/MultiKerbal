@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using MultiKerbal.Client.UI;
 using MultiKerbal.Common;
+using MultiKerbal.Common.Relay;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Common.Vessels;
 
@@ -24,6 +25,9 @@ namespace MultiKerbal.Client
 
         /// <summary>La dirección que dio playit.gg al hospedar, para no tener que buscarla cada vez.</summary>
         public string TunnelAddress = string.Empty;
+
+        /// <summary>Relay para entrar con código y para la lista pública ("host" o "host:puerto"). Cambia solo si alguien usa otro.</summary>
+        public string RelayAddress = ProtocolInfo.DefaultRelayAddress;
 
         /// <summary>Idioma del mod: "auto" (el de KSP), "es" o "en".</summary>
         public string Language = "auto";
@@ -68,6 +72,15 @@ namespace MultiKerbal.Client
                 if (Enum.TryParse(node.GetValue("defaultAccess"), out VesselAccess access) && VesselPermissions.IsValid(access))
                     settings.DefaultAccess = access;
 
+                string relay = node.GetValue("relayAddress")?.Trim();
+                if (!string.IsNullOrEmpty(relay))
+                {
+                    if (RelayEndpoint.TryParse(relay, ProtocolInfo.DefaultRelayPort, out _, out _))
+                        settings.RelayAddress = relay;
+                    else
+                        ClientLog.Warn($"relayAddress no es válida ({relay}): se usa la de por defecto ({ProtocolInfo.DefaultRelayAddress})");
+                }
+
                 string language = node.GetValue("language");
                 if (language is "auto" or "es" or "en")
                     settings.Language = language;
@@ -104,6 +117,10 @@ namespace MultiKerbal.Client
                     node.AddValue("accountPassword", AccountPassword);
                 node.AddValue("defaultAccess", DefaultAccess.ToString());
                 node.AddValue("language", Language);
+
+                // Solo si es otra: así quien no la toca recibe la nueva si algún día cambia la de por defecto.
+                if (RelayAddress != ProtocolInfo.DefaultRelayAddress)
+                    node.AddValue("relayAddress", RelayAddress);
                 SaveWarp(node.AddNode("WARP_POLICY"), Warp);
                 SaveLabels(node.AddNode("LABELS"), Labels);
                 root.Save(FilePath);

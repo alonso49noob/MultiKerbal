@@ -8,6 +8,7 @@ using MultiKerbal.Common.Messages;
 using MultiKerbal.Common.Mods;
 using MultiKerbal.Common.Net;
 using MultiKerbal.Common.Progress;
+using MultiKerbal.Common.Relay;
 using MultiKerbal.Common.Time;
 using UnityEngine;
 
@@ -66,6 +67,7 @@ namespace MultiKerbal.Client
             ConnectWindow = new ConnectWindow(this);
             MultiplayerWindow = new MultiplayerWindow(this);
             ModsWindow = new ModsWindow(this);
+            PublicServersWindow = new PublicServersWindow(this);
             HostingWindow = new HostingWindow(this);
             HandoverWindow = new HandoverWindow(this);
             _toolbar = new ToolbarButton(SetMultiplayerWindowVisible);
@@ -102,6 +104,8 @@ namespace MultiKerbal.Client
 
         public ModsWindow ModsWindow { get; }
 
+        public PublicServersWindow PublicServersWindow { get; }
+
         public HostingWindow HostingWindow { get; }
 
         /// <summary>Mods del servidor comparados con los de esta instalación (vacío hasta conectarse).</summary>
@@ -118,6 +122,12 @@ namespace MultiKerbal.Client
 
         public string ServerName { get; private set; } = string.Empty;
 
+        /// <summary>Código del servidor tal como lo dijo él (sin guion; vacío si no lo tiene). Se muestra con <see cref="ServerCode.Format"/>.</summary>
+        public string ServerJoinCode { get; private set; } = string.Empty;
+
+        /// <summary>Los puertos del servidor son alcanzables desde fuera, sin pasar por el relay.</summary>
+        public bool ServerDirect { get; private set; }
+
         public double RoundTripMs => Clock.Sync.RoundTripTime * 1000.0;
 
         public bool UdpReady => _net.UdpReady;
@@ -130,13 +140,39 @@ namespace MultiKerbal.Client
             Vessels.RegisterEvents();
         }
 
-        public void Connect(string host, int port, string playerName, string password, string accountPassword)
+        /// <summary>
+        /// <paramref name="server"/> es el texto del campo: un código del relay (K7M-Q2P) o la dirección del servidor.
+        /// El puerto solo cuenta si es una dirección.
+        /// </summary>
+        public void Connect(string server, int port, string playerName, string password, string accountPassword)
         {
             if (State != SessionState.Disconnected)
                 return;
 
-            Settings.Host = host;
-            Settings.Port = port;
+            server = server?.Trim() ?? string.Empty;
+            ConnectPlan plan;
+            string status;
+            if (ServerCode.LooksLikeCode(server))
+            {
+                // Un código mal escrito no se busca en el relay: el jugador lo corrige.
+                if (!ServerCode.TryNormalize(server, out string code))
+                {
+                    StatusText = Loc.T("Ese código no es válido", "That code is not valid");
+                    return;
+                }
+
+                server = ServerCode.Format(code);
+                plan = ConnectPlan.ForCode(Settings.RelayAddress, code);
+                status = Loc.T($"Buscando {server}...", $"Looking for {server}...");
+            }
+            else
+            {
+                Settings.Port = port;
+                plan = ConnectPlan.Direct(server, port);
+                status = Loc.T($"Conectando a {server}:{port}...", $"Connecting to {server}:{port}...");
+            }
+
+            Settings.Host = server;
             Settings.PlayerName = playerName;
             Settings.AccountPassword = accountPassword ?? string.Empty;
             Settings.Save();
@@ -145,9 +181,11 @@ namespace MultiKerbal.Client
             ResetSession();
             Chat.Clear();
             State = SessionState.Connecting;
-            StatusText = Loc.T($"Conectando a {host}:{port}...", $"Connecting to {host}:{port}...");
+            StatusText = status;
             ClientLog.Info(StatusText);
-            _net.Connect(host, port);
+
+            // La consulta al relay, el intento directo y la entrada por el relay corren en los hilos de NetClient.
+            _net.Connect(plan);
         }
 
         public void Disconnect(string reason)
@@ -227,6 +265,7 @@ namespace MultiKerbal.Client
             if (HighLogic.LoadedScene == GameScenes.MAINMENU)
             {
                 ConnectWindow.Draw();
+                PublicServersWindow.Draw();
                 ModsWindow.Draw();
                 HostingWindow.Draw();
                 return;
@@ -258,6 +297,7 @@ namespace MultiKerbal.Client
         {
             _startGamePending = false;
             ConnectWindow.Visible = false;
+            PublicServersWindow.Visible = false;
             try
             {
                 GameSession.StartGame(Clock.EstimateUniversalTime(LocalClock.Now), GameMode);
@@ -331,6 +371,9 @@ namespace MultiKerbal.Client
                 case ChatMessage chat:
                     OnChat(chat);
                     break;
+                case ServerCodeMessage serverCode:
+                    OnServerCode(serverCode);
+                    break;
                 case PlayerListMessage _:
                 case PlayerJoinedMessage _:
                 case PlayerLeftMessage _:
@@ -380,7 +423,9 @@ namespace MultiKerbal.Client
             GameMode = GameModes.IsValid(response.GameMode) ? response.GameMode : GameMode.Sandbox;
             Progress.Start(GameMode);
             Roster.Start();
-            StatusText = Loc.T($"Conectado a {ServerName}", $"Connected to {ServerName}");
+            StatusText = _net.ViaRelay
+                ? Loc.T($"Conectado a {ServerName} (por el relay)", $"Connected to {ServerName} (through the relay)")
+                : Loc.T($"Conectado a {ServerName} (directo)", $"Connected to {ServerName} (direct)");
             _nextPing = 0;
             _startGamePending = true;
             _net.StartUdp(response.UdpToken);
@@ -397,6 +442,21 @@ namespace MultiKerbal.Client
                     $"Partida de {GameModes.Describe(GameMode)}: el progreso es de todos.",
                     $"{GameModes.Describe(GameMode)} game: progress is shared by everyone."), SystemColor, true);
             ClientLog.Info($"Unido a \"{ServerName}\" como {Settings.PlayerName} (jugador {response.PlayerId})");
+        }
+
+        /// <summary>El servidor dice su código al entrar y otra vez si cambia. Viene de fuera: solo vale si es un código bien formado.</summary>
+        private void OnServerCode(ServerCodeMessage message)
+        {
+            if (ServerCode.TryNormalize(message.Code, out string code))
+            {
+                ServerJoinCode = code;
+                ServerDirect = message.Direct;
+            }
+            else
+            {
+                ServerJoinCode = string.Empty;
+                ServerDirect = false;
+            }
         }
 
         /// <summary>
@@ -479,6 +539,8 @@ namespace MultiKerbal.Client
             _startGamePending = false;
             _enteredGame = false;
             ServerName = string.Empty;
+            ServerJoinCode = string.Empty;
+            ServerDirect = false;
         }
     }
 }

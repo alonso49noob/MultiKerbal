@@ -1,4 +1,5 @@
 using MultiKerbal.Common;
+using MultiKerbal.Common.Relay;
 using UnityEngine;
 
 namespace MultiKerbal.Client.UI
@@ -8,7 +9,8 @@ namespace MultiKerbal.Client.UI
     {
         private const int WindowId = 0x4D4B0001;
         private const float Width = 420f;
-        private const float LabelWidth = 90f;
+        private const float LabelWidth = 140f;
+        private const float ButtonWidth = 90f;
 
         private readonly ClientCore _core;
         private readonly GUI.WindowFunction _drawContents;
@@ -37,18 +39,38 @@ namespace MultiKerbal.Client.UI
                 return;
             }
 
-            if (_name == null)
-            {
-                _name = _core.Settings.PlayerName;
-                _host = _core.Settings.Host;
-                _port = _core.Settings.Port.ToString();
-                _accountPassword = _core.Settings.AccountPassword;
-            }
+            EnsureLoaded();
 
             if (_rect.x < 0f)
                 _rect.x = Screen.width - Width - 40f;
 
             _rect = GUILayout.Window(WindowId, _rect, _drawContents, "MultiKerbal " + ClientCore.ModVersion, GUILayout.Width(Width));
+        }
+
+        private void EnsureLoaded()
+        {
+            if (_name != null)
+                return;
+
+            _name = _core.Settings.PlayerName;
+            _host = _core.Settings.Host;
+            _port = _core.Settings.Port.ToString();
+            _accountPassword = _core.Settings.AccountPassword;
+        }
+
+        /// <summary>
+        /// El jugador eligió un servidor de la lista pública. Sin clave, entra; con clave, rellena el campo y espera a que la
+        /// escriba y pulse Conectar.
+        /// </summary>
+        public void JoinFromList(string code, bool hasPassword)
+        {
+            EnsureLoaded();
+            _host = ServerCode.Format(code);
+            _password = string.Empty;
+            if (hasPassword)
+                _core.SetStatus(Loc.T("Escribe la contraseña y pulsa Conectar", "Type the password and press Connect"));
+            else
+                TryConnect();
         }
 
         private static string Field(string label, string value, int maxLength)
@@ -90,8 +112,19 @@ namespace MultiKerbal.Client.UI
                 Loc.T("La primera vez que entras con un nombre, esta contraseña queda como la de tu cuenta: nadie más podrá usar tu nombre ni tus naves.",
                       "The first time you join with a name, this becomes your account's password: nobody else can use your name or your vessels."),
                 UiStyles.Muted);
-            _host = Field(Loc.T("Servidor", "Server"), _host, 128);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(Loc.T("Servidor (IP o código)", "Server (IP or code)"), UiStyles.Label, GUILayout.Width(LabelWidth));
+            _host = GUILayout.TextField(_host ?? string.Empty, 128);
+            GUI.enabled = true;
+            if (GUILayout.Button(Loc.T("Lista", "List"), GUILayout.Width(60f)))
+                _core.PublicServersWindow.Toggle();
+            GUI.enabled = idle;
+            GUILayout.EndHorizontal();
+
+            // Con un código no hay puerto: lo resuelve el relay.
+            GUI.enabled = idle && !ServerCode.LooksLikeCode(_host);
             _port = Field(Loc.T("Puerto", "Port"), _port, 5);
+            GUI.enabled = idle;
             _password = SecretField(Loc.T("Clave servidor", "Server key"), _password, 64);
             GUI.enabled = true;
 
@@ -113,9 +146,9 @@ namespace MultiKerbal.Client.UI
 
             if (GUILayout.Button("Mods", GUILayout.Width(70f)))
                 _core.ModsWindow.Visible = !_core.ModsWindow.Visible;
-            if (GUILayout.Button(Loc.T("Hospedar", "Host"), GUILayout.Width(LabelWidth)))
+            if (GUILayout.Button(Loc.T("Hospedar", "Host"), GUILayout.Width(ButtonWidth)))
                 _core.HostingWindow.Toggle();
-            if (GUILayout.Button(Loc.T("Ocultar", "Hide"), GUILayout.Width(LabelWidth)))
+            if (GUILayout.Button(Loc.T("Ocultar", "Hide"), GUILayout.Width(ButtonWidth)))
                 Visible = false;
             GUILayout.EndHorizontal();
 
@@ -161,7 +194,7 @@ namespace MultiKerbal.Client.UI
 
             if (host.Length == 0)
             {
-                _core.SetStatus(Loc.T("Indica la dirección del servidor", "Enter the server address"));
+                _core.SetStatus(Loc.T("Indica la IP o el código del servidor", "Enter the server's IP or code"));
                 return;
             }
 
@@ -170,6 +203,13 @@ namespace MultiKerbal.Client.UI
                 _core.SetStatus(Loc.T(
                     $"Tu contraseña debe tener al menos {ProtocolInfo.MinAccountPasswordLength} caracteres",
                     $"Your password needs at least {ProtocolInfo.MinAccountPasswordLength} characters"));
+                return;
+            }
+
+            // Un código (K7M-Q2P) no lleva puerto: ClientCore lo valida y lo busca en el relay.
+            if (ServerCode.LooksLikeCode(host))
+            {
+                _core.Connect(host, _core.Settings.Port, name, _password, _accountPassword);
                 return;
             }
 

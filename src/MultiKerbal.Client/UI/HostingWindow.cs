@@ -1,20 +1,26 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
+using MultiKerbal.Common;
 using MultiKerbal.Common.Hosting;
+using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Relay;
 using UnityEngine;
 
 namespace MultiKerbal.Client.UI
 {
     /// <summary>
-    /// Ayuda para que otros entren al servidor desde fuera de casa. El servidor se abre aparte; aquí el jugador
-    /// elige una de las cuatro formas (abrir el puerto, red virtual, túnel o nube) y el juego hace lo que puede solo.
+    /// Ayuda para que otros entren al servidor desde fuera de casa. El servidor se abre aparte; arriba se ve su estado y su
+    /// código del relay, y en "Avanzado" el jugador elige una de las cuatro formas de las versiones anteriores (abrir el
+    /// puerto, red virtual, túnel o nube) y el juego hace lo que puede solo.
     /// </summary>
     internal sealed class HostingWindow
     {
         private const int WindowId = 0x4D4B0008;
         private const float Width = 500f;
-        private const float CopiedSeconds = 2f;
+        private const float PollSeconds = 3f;
+        private const int QueryTimeoutMs = 1000;
+        private const int ControlTimeoutMs = 2000;
+        private const string LocalHost = "127.0.0.1";
 
         private const string PlayitUrl = "https://playit.gg/download";
         private const string TailscaleUrl = "https://tailscale.com/download";
@@ -38,8 +44,16 @@ namespace MultiKerbal.Client.UI
         private string _port;
         private string _homeAddress;
         private bool _showManual;
-        private string _copied;
-        private float _copiedAt;
+        private bool _showAdvanced;
+        private float _nextPoll;
+
+        // Estado del servidor. El hilo de consulta deja el resultado en _incoming; la ventana lo copia a _status al empezar
+        // a dibujar cada cuadro (evento Layout), para que no cambie entre el Layout y el Repaint.
+        private volatile StatusSnapshot _incoming;
+        private volatile bool _queryRunning;
+        private StatusSnapshot _status;
+        private bool _statusBusy;
+        private int _statusPort;
 
         // Lo escriben los hilos de fondo y lo lee la ventana.
         private volatile bool _routerBusy;
@@ -63,6 +77,9 @@ namespace MultiKerbal.Client.UI
 
             _port = _core.Settings.Port.ToString();
             _homeAddress = LocalNetworks.HomeAddress()?.ToString();
+            _status = null;
+            _incoming = null;
+            _nextPoll = 0f;
             ScanVirtualNetworks();
         }
 
@@ -72,6 +89,12 @@ namespace MultiKerbal.Client.UI
                 return;
 
             UiStyles.Apply();
+            if (Event.current.type == EventType.Layout)
+            {
+                AdoptStatus();
+                PollIfDue();
+            }
+
             if (_rect.x < 0f)
                 _rect.x = Mathf.Max(10f, Screen.width - Width - 460f);
 
@@ -94,7 +117,26 @@ namespace MultiKerbal.Client.UI
 
             if (Port < 0)
                 UiStyles.ColoredLabel(Loc.T("Puerto inválido", "Invalid port"), UiStyles.Bad);
-            else if (_homeAddress != null)
+
+            GUILayout.Space(6f);
+            DrawStatus();
+
+            GUILayout.Space(6f);
+            _showAdvanced = GUILayout.Toggle(_showAdvanced, (_showAdvanced ? UiStyles.Open : UiStyles.Closed) + " " + Loc.T("Avanzado", "Advanced"), UiStyles.Label);
+            if (_showAdvanced)
+                DrawAdvanced();
+
+            GUILayout.Space(6f);
+            if (GUILayout.Button(Loc.T("Cerrar", "Close")))
+                Visible = false;
+
+            GUI.DragWindow();
+        }
+
+        /// <summary>Las formas de llegar al servidor de la 0.1: abrir el puerto, red virtual, túnel o nube.</summary>
+        private void DrawAdvanced()
+        {
+            if (Port >= 0 && _homeAddress != null)
                 AddressRow(Loc.T("Misma red de casa:", "Same home network:"), $"{_homeAddress}:{Port}");
 
             GUILayout.Space(6f);
@@ -122,12 +164,152 @@ namespace MultiKerbal.Client.UI
                     DrawCloud();
                     break;
             }
+        }
 
-            GUILayout.Space(6f);
-            if (GUILayout.Button(Loc.T("Cerrar", "Close")))
-                Visible = false;
+        private void AdoptStatus()
+        {
+            StatusSnapshot incoming = _incoming;
+            if (incoming != null)
+            {
+                _incoming = null;
+                _status = incoming;
+            }
 
-            GUI.DragWindow();
+            _statusBusy = _queryRunning;
+            _statusPort = Port;
+        }
+
+        private void PollIfDue()
+        {
+            if (Time.realtimeSinceStartup >= _nextPoll)
+                RunQuery(null);
+        }
+
+        /// <summary>
+        /// Consulta el estado del servidor de este PC, antes mandándole una orden si se pide. Como mucho una a la vez, en un
+        /// hilo aparte, y la siguiente no sale antes de <see cref="PollSeconds"/>.
+        /// </summary>
+        private void RunQuery(ServerControlAction? action)
+        {
+            int port = Port;
+            if (port < 0 || _queryRunning)
+                return;
+
+            _queryRunning = true;
+            _nextPoll = Time.realtimeSinceStartup + PollSeconds;
+            BackgroundWork.Run("estado del servidor", () =>
+            {
+                bool controlFailed = false;
+                if (action.HasValue)
+                {
+                    controlFailed = !ServerStatusQuery.SendControl(LocalHost, port, action.Value, ControlTimeoutMs);
+                    if (controlFailed)
+                        ClientLog.Warn($"El servidor no aceptó la orden {action.Value}");
+                }
+
+                ServerStatusResponseMessage response = ServerStatusQuery.Query(LocalHost, port, QueryTimeoutMs, out bool portOpen);
+                _incoming = new StatusSnapshot { Port = port, Response = response, PortOpen = portOpen, ControlFailed = controlFailed };
+            }, () => _queryRunning = false);
+        }
+
+        /// <summary>Lo que dice el servidor de este PC: si funciona, su código del relay, cómo se llega a él y si sale en la lista.</summary>
+        private void DrawStatus()
+        {
+            StatusSnapshot snapshot = _status;
+            if (snapshot == null || snapshot.Port != _statusPort)
+            {
+                GUILayout.Label(Loc.T("Buscando tu servidor...", "Looking for your server..."), UiStyles.Muted);
+                return;
+            }
+
+            ServerStatusResponseMessage status = snapshot.Response;
+            if (status == null)
+            {
+                // Un servidor 0.1.x cierra la conexión al recibir la consulta, que no conoce: el puerto sí se abre.
+                if (snapshot.PortOpen)
+                    UiStyles.ColoredLabel(Loc.T("Tu servidor es de una versión anterior: actualízalo", "Your server is an older version: update it"), UiStyles.Warning);
+                else
+                    UiStyles.ColoredLabel(Loc.T("No encuentro tu servidor en este PC: ábrelo primero", "I can't find your server on this PC: start it first"), UiStyles.Bad);
+                return;
+            }
+
+            UiStyles.ColoredLabel(UiStyles.Tick + " " + Loc.T(
+                $"Servidor en marcha: {status.Name} ({status.Players}/{status.MaxPlayers} jugadores)",
+                $"Server running: {status.Name} ({status.Players}/{status.MaxPlayers} players)"), UiStyles.Good);
+            if (status.GameProtocol != ProtocolInfo.Version)
+            {
+                UiStyles.ColoredLabel(Loc.T(
+                    $"Tu servidor usa otra versión de MultiKerbal ({status.ModVersion}): actualiza el que tenga la versión más antigua.",
+                    $"Your server uses another version of MultiKerbal ({status.ModVersion}): update whichever is older."), UiStyles.Warning);
+            }
+
+            GUI.enabled = !_statusBusy;
+            switch (status.RelayState)
+            {
+                case RelayLinkState.Off:
+                    GUILayout.Label(Loc.T(
+                        "Este servidor no usa el relay: solo se entra con su IP.",
+                        "This server doesn't use the relay: it can only be joined by IP."), UiStyles.Muted);
+                    break;
+                case RelayLinkState.Connecting:
+                    GUILayout.Label(Loc.T("Conectando con el relay...", "Connecting to the relay..."), UiStyles.Muted);
+                    if (status.RelayError.Length > 0)
+                        GUILayout.Label(status.RelayError, UiStyles.Muted);
+                    break;
+                case RelayLinkState.Rejected:
+                    UiStyles.ColoredLabel(Loc.T("El relay ha rechazado tu servidor.", "The relay rejected your server."), UiStyles.Bad);
+                    if (status.RelayError.Length > 0)
+                        GUILayout.Label(status.RelayError, UiStyles.Muted);
+                    break;
+                case RelayLinkState.Registered:
+                    DrawRegistered(status);
+                    break;
+            }
+
+            if (status.RelayState != RelayLinkState.Off)
+            {
+                bool wantPublic = GUILayout.Toggle(status.IsPublic, Loc.T("Mostrar en la lista pública", "Show in the public list"));
+                if (wantPublic != status.IsPublic)
+                    RunQuery(wantPublic ? ServerControlAction.SetPublic : ServerControlAction.SetPrivate);
+            }
+
+            GUI.enabled = true;
+
+            if (snapshot.ControlFailed)
+            {
+                UiStyles.ColoredLabel(Loc.T(
+                    "El servidor no aceptó el cambio. Solo se puede pedir desde el PC donde está abierto.",
+                    "The server didn't accept the change. It can only be requested from the PC where it's running."), UiStyles.Warning);
+            }
+        }
+
+        private void DrawRegistered(ServerStatusResponseMessage status)
+        {
+            if (ServerCode.TryNormalize(status.Code, out string code))
+            {
+                string shown = ServerCode.Format(code);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(Loc.T("Código para tus amigos:", "Code for your friends:"), UiStyles.Label, GUILayout.Width(170f));
+                GUILayout.Label(shown, UiStyles.Bold);
+                CopyButton.Draw(shown);
+                GUILayout.EndHorizontal();
+            }
+
+            if (status.Direct)
+            {
+                UiStyles.ColoredLabel(UiStyles.Tick + " " + Loc.T(
+                    "Accesible directamente: tus amigos entran sin pasar por el relay.",
+                    "Directly reachable: your friends join without going through the relay."), UiStyles.Good);
+            }
+            else
+            {
+                UiStyles.ColoredLabel(Loc.T(
+                    "Por el relay: tus amigos entran a través del relay. Para que vayan directos abre el puerto (en Avanzado).",
+                    "Through the relay: your friends join via the relay. To let them connect directly, open the port (under Advanced)."), UiStyles.Warning);
+            }
+
+            if (GUILayout.Button(Loc.T("Volver a comprobar", "Check again")))
+                RunQuery(ServerControlAction.Recheck);
         }
 
         private void DrawRouter()
@@ -296,7 +478,7 @@ namespace MultiKerbal.Client.UI
             }
 
             GUI.enabled = tunnel.Trim().Length > 0;
-            CopyButton(tunnel.Trim());
+            CopyButton.Draw(tunnel.Trim());
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
@@ -335,10 +517,7 @@ namespace MultiKerbal.Client.UI
             GUILayout.Label(Loc.T(
                 "Firewall de Windows: si al abrir el servidor te preguntó, dale a Permitir. Si no, pega esto en PowerShell abierto como administrador.",
                 "Windows Firewall: if it asked when you started the server, choose Allow. If not, paste this into PowerShell opened as administrator."), UiStyles.Muted);
-            if (GUILayout.Button(_copied == FirewallCommands && Time.realtimeSinceStartup - _copiedAt < CopiedSeconds
-                    ? UiStyles.Tick
-                    : Loc.T("Copiar", "Copy"), GUILayout.Width(80f)))
-                Copy(FirewallCommands);
+            CopyButton.Draw(FirewallCommands);
             GUILayout.EndHorizontal();
         }
 
@@ -351,22 +530,8 @@ namespace MultiKerbal.Client.UI
             GUILayout.BeginHorizontal();
             GUILayout.Label(label, UiStyles.Label, GUILayout.Width(170f));
             GUILayout.Label(address, UiStyles.Bold);
-            CopyButton(address);
+            CopyButton.Draw(address);
             GUILayout.EndHorizontal();
-        }
-
-        private void CopyButton(string text)
-        {
-            bool justCopied = _copied == text && Time.realtimeSinceStartup - _copiedAt < CopiedSeconds;
-            if (GUILayout.Button(justCopied ? UiStyles.Tick : Loc.T("Copiar", "Copy"), GUILayout.Width(80f)))
-                Copy(text);
-        }
-
-        private void Copy(string text)
-        {
-            GUIUtility.systemCopyBuffer = text;
-            _copied = text;
-            _copiedAt = Time.realtimeSinceStartup;
         }
 
         private void RunRouter(bool open)
@@ -374,7 +539,7 @@ namespace MultiKerbal.Client.UI
             int port = Port;
             _routerBusy = true;
             _routerResult = null;
-            RunInBackground("UPnP", () =>
+            BackgroundWork.Run("UPnP", () =>
             {
                 PortForwardResult result = open ? PortForwarding.Open(port) : PortForwarding.Close(port);
                 ClientLog.Info($"UPnP {(open ? "abrir" : "cerrar")} puerto {port}: {result.Outcome}, NAT {result.Nat}" +
@@ -389,7 +554,7 @@ namespace MultiKerbal.Client.UI
                 return;
 
             _scanning = true;
-            RunInBackground("redes virtuales", () =>
+            BackgroundWork.Run("redes virtuales", () =>
             {
                 List<LocalNetworkAddress> found = LocalNetworks.FindVirtualNetworks();
                 ClientLog.Info($"Redes virtuales encontradas: {found.Count}");
@@ -397,28 +562,18 @@ namespace MultiKerbal.Client.UI
             }, () => _scanning = false);
         }
 
-        /// <summary>La red bloquea varios segundos: nunca en el hilo de Unity.</summary>
-        private static void RunInBackground(string what, Action work, Action done)
+        private sealed class StatusSnapshot
         {
-            new Thread(() =>
-            {
-                try
-                {
-                    work();
-                }
-                catch (Exception ex)
-                {
-                    ClientLog.Warn($"Fallo en {what}: {ex.Message}");
-                }
-                finally
-                {
-                    done();
-                }
-            })
-            {
-                IsBackground = true,
-                Name = "MultiKerbal " + what,
-            }.Start();
+            public int Port;
+
+            /// <summary>Null si el servidor no contestó a la consulta.</summary>
+            public ServerStatusResponseMessage Response;
+
+            /// <summary>La TCP llegó a abrirse aunque no hubo respuesta.</summary>
+            public bool PortOpen;
+
+            /// <summary>La orden que se mandó antes de consultar no fue aceptada.</summary>
+            public bool ControlFailed;
         }
     }
 }

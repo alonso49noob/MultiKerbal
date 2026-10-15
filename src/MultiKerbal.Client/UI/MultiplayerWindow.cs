@@ -1,6 +1,7 @@
 using MultiKerbal.Client.Systems;
 using MultiKerbal.Common;
 using MultiKerbal.Common.Messages;
+using MultiKerbal.Common.Relay;
 using MultiKerbal.Common.Time;
 using MultiKerbal.Common.Vessels;
 using UnityEngine;
@@ -125,6 +126,18 @@ namespace MultiKerbal.Client.UI
                 UiStyles.ColoredLabel(Loc.T("sin UDP (va todo por TCP)", "no UDP (all over TCP)"), UiStyles.Warning);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
+
+            // El código del servidor, para pasárselo a quien quieras invitar (lo ve cualquiera que esté dentro).
+            if (_core.ServerJoinCode.Length > 0)
+            {
+                string code = ServerCode.Format(_core.ServerJoinCode);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(Loc.T("Código:", "Code:"), UiStyles.Label, GUILayout.Width(70f));
+                GUILayout.Label(code, UiStyles.Bold, GUILayout.Width(90f));
+                CopyButton.Draw(code);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
         }
 
         private static Color PingColor(double milliseconds) =>
