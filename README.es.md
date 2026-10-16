@@ -78,6 +78,8 @@ El mod no necesita otros mods. Solo funciona con KSP 1.12.x.
 
 Si quieres que tu servidor salga en la lista pública, escribe `public on` en su consola (o marca *Mostrar en la lista pública* en **Hospedar**). Por defecto no sale: solo entra quien tenga el código.
 
+**Límites del relay:** por el relay pueden entrar a la vez como mucho 4 jugadores desde una misma IP pública al mismo servidor (por ejemplo, 4 amigos de la misma casa), y desde una misma IP se pueden crear como mucho 3 servidores nuevos (con código nuevo) al día. Si necesitáis más, abre el puerto para que entren directos. Detalles en [docs/RELAY.md](docs/RELAY.md#límites).
+
 > **Si usas un túnel en tu PC** (playit.gg u otro agente parecido): las conexiones que llegan por el túnel parecen hechas desde el propio PC, así que cualquiera que entre por él podría cambiar *Mostrar en la lista pública* o pedir otra comprobación, igual que tú desde **Hospedar**. Si eso te importa, usa el código o abre el puerto en vez del túnel.
 
 > **Sin cifrar:** el tráfico del juego no va cifrado, ni por IP ni por el relay. Cuando un jugador entra *por el relay*, quien lo administra podría ver ese tráfico. Si el servidor es accesible directamente, los jugadores entran directos y no pasa por el relay. Más en [docs/RELAY.md](docs/RELAY.md), que también explica cómo montar tu propio relay.

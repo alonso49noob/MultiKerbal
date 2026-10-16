@@ -73,7 +73,8 @@ public sealed partial class ServerHost
     {
         _relayInfo = new RelayServerInfo
         {
-            Name = Config.ServerName,
+            // Cortado como lo mostrará el relay: un nombre enorme haría que el registro no cupiera en su primer mensaje (4 KB).
+            Name = ListedName.Sanitize(Config.ServerName),
             Players = AuthenticatedPlayers().Count(),
             MaxPlayers = Config.MaxPlayers,
             HasPassword = !string.IsNullOrEmpty(Config.Password),

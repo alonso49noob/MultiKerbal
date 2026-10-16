@@ -2,6 +2,11 @@ using MultiKerbal.Common.Serialization;
 
 namespace MultiKerbal.Common.Messages
 {
+    // Compatibilidad: RelayLookupResult, RelayJoinResult y RelayRejected son las respuestas que un relay da a quien
+    // tiene otra versión del protocolo. Un relay futuro tiene que seguir contestando a los pares de la versión 1 con la
+    // disposición de la versión 1 de estos tres mensajes (campos y orden de abajo), para que vean el error de versión en
+    // vez de leer basura.
+
     /// <summary>
     /// Motivo de un error del relay. El mod y el servidor escriben el texto en su idioma a partir de este código
     /// (<see cref="Relay.RelayErrorText"/>); el texto que manda el relay solo se usa si el código es desconocido.

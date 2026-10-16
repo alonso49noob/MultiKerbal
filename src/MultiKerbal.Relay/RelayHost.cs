@@ -173,38 +173,29 @@ public sealed partial class RelayHost
 
     public void WaitForStopRequest() => _stopRequested.Wait();
 
+    /// <summary>
+    /// El relay solo escucha por IPv4 (IPv6 queda fuera del diseño). Así, además, los límites por IP no se pueden saltar
+    /// cambiando de dirección dentro de un bloque IPv6 propio (una /64 tiene trillones).
+    /// </summary>
     private static TcpListener CreateListener(int port)
     {
-        var dualMode = new TcpListener(IPAddress.IPv6Any, port);
-        try
-        {
-            dualMode.Server.DualMode = true;
-            dualMode.Start();
-            return dualMode;
-        }
-        catch (SocketException)
-        {
-            // Sistemas sin IPv6.
-            dualMode.Stop();
-            var ipv4 = new TcpListener(IPAddress.Any, port);
-            ipv4.Start();
-            return ipv4;
-        }
+        var listener = new TcpListener(IPAddress.Any, port);
+        listener.Start();
+        return listener;
     }
 
+    /// <summary>Socket UDP solo IPv4, como el puerto TCP (ver <see cref="CreateListener"/>).</summary>
     private static Socket CreateUdpSocket(int port)
     {
-        Socket socket = new(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp);
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
         {
-            socket.DualMode = true;
-            socket.Bind(new IPEndPoint(IPAddress.IPv6Any, port));
+            socket.Bind(new IPEndPoint(IPAddress.Any, port));
         }
-        catch (SocketException)
+        catch
         {
             socket.Dispose();
-            socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            socket.Bind(new IPEndPoint(IPAddress.Any, port));
+            throw;
         }
 
         // En Windows, un aviso ICMP de "puerto inalcanzable" (un jugador que se fue, una sonda a un puerto cerrado)

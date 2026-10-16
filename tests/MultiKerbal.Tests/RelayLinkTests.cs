@@ -152,6 +152,19 @@ public sealed class RelayLinkTests
     }
 
     [Fact]
+    public void HugeServerName_IsCutBeforeRegistering_SoTheRegistrationFits()
+    {
+        // Más de los 4 KB del primer mensaje del relay si se mandara entero.
+        using var relay = new TestRelay(LongLived);
+        using var server = new TestServer(relayAddress: relay.RelayAddress, serverName: "Servidor " + new string('n', 6000));
+
+        Assert.True(WaitRegistered(server), "Un nombre enorme no debe impedir el registro");
+        Assert.True(relay.Host.TryGetServer(LinkOf(server).Code, out ServerSession? session));
+        Assert.Equal(ProtocolInfo.MaxListedNameLength, session.Info.Name.Length);
+        Assert.StartsWith("Servidor nnn", session.Info.Name);
+    }
+
+    [Fact]
     public void TemporaryRejection_ShowsRejected_AndRetriesAfterRetryMax()
     {
         using var relay = new TestRelay(o =>

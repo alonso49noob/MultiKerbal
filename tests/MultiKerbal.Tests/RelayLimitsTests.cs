@@ -260,6 +260,22 @@ public sealed class RelayLimitsTests
         Assert.Equal(ProtocolInfo.MaxListedVersionLength, entry.ModVersion.Length);
     }
 
+    [Fact]
+    public void Relay_ListensOnIpv4Only_AndSeesPlainIpv4Addresses()
+    {
+        using var relay = new TestRelay(LongLived);
+
+        // Por IPv6 no hay nadie escuchando (en un equipo sin IPv6 también falla, que es lo que importa).
+        using (var ipv6 = new TcpClient(AddressFamily.InterNetworkV6))
+            Assert.ThrowsAny<SocketException>(() => ipv6.Connect(IPAddress.IPv6Loopback, relay.Port));
+
+        using RawRelayClient control = relay.Connect();
+        string code = control.Request<RelayRegisteredMessage>(RawRelayClient.Register(RawRelayClient.Key(1))).Code;
+        Assert.True(relay.Host.TryGetServer(code, out ServerSession? session));
+        Assert.Equal(IPAddress.Loopback, session.RemoteAddress);
+        Assert.Equal(AddressFamily.InterNetwork, session.RemoteAddress.AddressFamily);
+    }
+
     // --- Comprobaciones pedidas por el servidor (N4) ---
 
     [Fact]

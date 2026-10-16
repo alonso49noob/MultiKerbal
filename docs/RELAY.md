@@ -23,6 +23,7 @@ El relay **no guarda el contenido** de lo que pasa por él. Su registro (`logs/`
 - Una máquina con **IP pública** y puertos que puedas abrir. Basta **1 núcleo y 1 GB de RAM**. La gratuita [Oracle Cloud Free Tier](https://www.oracle.com/cloud/free/) (instancia Ampere, `linux-arm64`) sobra.
 - Un nombre fijo que apunte a ella, por ejemplo gratis con [DuckDNS](https://www.duckdns.org). Se puede usar la IP directamente, pero si cambia tendrías que avisar a todos.
 - **No hace falta instalar .NET**: el ejecutable lleva dentro todo lo que necesita.
+- **Solo IPv4.** El relay escucha únicamente por IPv4 (en todas las direcciones IPv4 de la máquina); el nombre que uses debe tener una dirección IPv4 (registro A). IPv6 queda fuera, también porque con IPv6 una sola persona tiene millones de direcciones y se saltaría los límites por IP.
 
 ## Obtener el programa
 

@@ -74,6 +74,8 @@ The mod needs no other mods. It only works with KSP 1.12.x.
 
 If you want your server to appear in the public list, type `public on` in its console (or tick *Show in the public list* in **Host**). By default it does not: only people with the code get in.
 
+**Relay limits:** at most 4 players from the same public IP can be in the same server through the relay at once (for example, 4 friends in the same house), and at most 3 new servers (with a new code) can be created from the same IP per day. If you need more, open the port so they connect directly. Details in [docs/RELAY.md](docs/RELAY.md#límites) (in Spanish).
+
 > **If you use a tunnel on your PC** (playit.gg or a similar agent): connections that come through the tunnel look as if they were made from your own PC, so anyone who gets in through it could toggle *Show in the public list* or ask for another check, just like you can from **Host**. If that matters to you, use the code or open the port instead of the tunnel.
 
 > **Not encrypted:** game traffic is not encrypted, neither by IP nor through the relay. When a player joins *through the relay*, whoever runs the relay could see that traffic. If the server can be reached directly, players connect directly and it does not go through the relay. More in [docs/RELAY.md](docs/RELAY.md) (in Spanish), which also explains how to run your own relay.
