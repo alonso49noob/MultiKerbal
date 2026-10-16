@@ -24,6 +24,9 @@ namespace MultiKerbal.Client.UI
         private readonly LabelSettingsWindow _labelSettings;
         private readonly VesselOwnershipWindow _ownership;
         private Rect _rect = new Rect(60f, 140f, Width, 0f);
+
+        // GUILayout.Window crece solo pero nunca encoge: al plegar una sección se le pide que vuelva a medir.
+        private bool _shrink;
         private Vector2 _chatScroll;
         private Vector2 _vesselScroll;
         private int _seenChatVersion = -1;
@@ -79,6 +82,12 @@ namespace MultiKerbal.Client.UI
                 _inputFocused = false;
             }
 
+            if (_shrink && current.type == EventType.Layout)
+            {
+                _rect.height = 0f;
+                _shrink = false;
+            }
+
             _rect = GUILayout.Window(WindowId, _rect, _drawContents, "MultiKerbal — " + _core.ServerName, GUILayout.Width(Width));
             UpdateInputLock();
             _warpSettings.Draw();
@@ -87,14 +96,16 @@ namespace MultiKerbal.Client.UI
         }
 
         /// <summary>Cabecera de sección plegable: devuelve si hay que dibujar su contenido.</summary>
-        private static bool Section(ref bool open, string title, string extra = null)
+        private bool Section(ref bool open, string title, string extra = null)
         {
             GUILayout.Space(4f);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(open ? UiStyles.Open : UiStyles.Closed, UiStyles.Label, GUILayout.Width(22f)))
+            if (GUILayout.Button(open ? UiStyles.Open : UiStyles.Closed, UiStyles.Label, GUILayout.Width(22f))
+                | GUILayout.Button(title, UiStyles.Bold, GUILayout.Width(180f)))
+            {
                 open = !open;
-            if (GUILayout.Button(title, UiStyles.Bold, GUILayout.Width(180f)))
-                open = !open;
+                _shrink = true;
+            }
             if (!string.IsNullOrEmpty(extra))
                 GUILayout.Label(extra, UiStyles.Muted);
             GUILayout.FlexibleSpace();

@@ -50,6 +50,10 @@ namespace MultiKerbal.Client.UI
         private bool _showAdvanced;
         private float _nextPoll;
 
+        // GUILayout.Window crece solo pero nunca encoge: al plegar un apartado o cambiar de pestaña hay que pedirle que
+        // vuelva a medir el contenido desde cero en el siguiente Layout.
+        private bool _shrink;
+
         // Estado del servidor. El hilo de consulta deja el resultado en _incoming; la ventana lo copia a _status al empezar
         // a dibujar cada cuadro (evento Layout), para que no cambie entre el Layout y el Repaint.
         private volatile StatusSnapshot _incoming;
@@ -106,6 +110,12 @@ namespace MultiKerbal.Client.UI
             if (_rect.x < 0f)
                 _rect.x = Mathf.Max(10f, Screen.width - Width - 460f);
 
+            if (_shrink && Event.current.type == EventType.Layout)
+            {
+                _rect.height = 0f;
+                _shrink = false;
+            }
+
             _rect = GUILayout.Window(WindowId, _rect, _drawContents, Loc.T("Hospedar: que entren tus amigos", "Host: let your friends in"), GUILayout.Width(Width));
         }
 
@@ -130,7 +140,13 @@ namespace MultiKerbal.Client.UI
             DrawStatus();
 
             GUILayout.Space(6f);
-            _showAdvanced = GUILayout.Toggle(_showAdvanced, (_showAdvanced ? UiStyles.Open : UiStyles.Closed) + " " + Loc.T("Avanzado", "Advanced"), UiStyles.Label);
+            bool showAdvanced = GUILayout.Toggle(_showAdvanced, (_showAdvanced ? UiStyles.Open : UiStyles.Closed) + " " + Loc.T("Avanzado", "Advanced"), UiStyles.Label);
+            if (showAdvanced != _showAdvanced)
+            {
+                _showAdvanced = showAdvanced;
+                _shrink = true;
+            }
+
             if (_showAdvanced)
                 DrawAdvanced();
 
@@ -148,6 +164,7 @@ namespace MultiKerbal.Client.UI
                 AddressRow(Loc.T("Misma red de casa:", "Same home network:"), $"{_homeAddress}:{Port}");
 
             GUILayout.Space(6f);
+            var previousTab = _tab;
             _tab = (Tab)GUILayout.Toolbar((int)_tab, new[]
             {
                 Loc.T("Abrir puerto", "Open port"),
@@ -155,6 +172,8 @@ namespace MultiKerbal.Client.UI
                 Loc.T("Túnel", "Tunnel"),
                 Loc.T("Nube", "Cloud"),
             });
+            if (_tab != previousTab)
+                _shrink = true;
             GUILayout.Space(4f);
 
             switch (_tab)
@@ -356,7 +375,13 @@ namespace MultiKerbal.Client.UI
 
             DrawFirewall();
 
-            _showManual = GUILayout.Toggle(_showManual, (_showManual ? UiStyles.Open : UiStyles.Closed) + " " + Loc.T("Hacerlo a mano en el router", "Do it by hand on the router"), UiStyles.Label);
+            bool showManual = GUILayout.Toggle(_showManual, (_showManual ? UiStyles.Open : UiStyles.Closed) + " " + Loc.T("Hacerlo a mano en el router", "Do it by hand on the router"), UiStyles.Label);
+            if (showManual != _showManual)
+            {
+                _showManual = showManual;
+                _shrink = true;
+            }
+
             if (_showManual)
             {
                 string local = _homeAddress ?? Loc.T("la IP de este PC", "this PC's IP");
